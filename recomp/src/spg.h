@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #include "i2c.h"
+#include "spu.h"
 #include "unsp.h"
 
 #define SPG_CLOCK 27000000
@@ -25,7 +26,7 @@ typedef struct spg {
     uint16_t ram[0x2800];
     uint16_t vregs[0x100];  /* 0x2800 PPU */
     uint16_t vram[0x700];   /* 0x2900 scroll, 0x2a00 hcomp, 0x2b00 palette, 0x2c00 sprites */
-    uint16_t aregs[0x800];  /* 0x3000 SPU, stored only */
+    spu_t spu;              /* 0x3000-0x37ff */
     uint16_t ioregs[0x100]; /* 0x3d00 */
     uint16_t dmaregs[4];    /* 0x3e00 */
 
@@ -37,6 +38,8 @@ typedef struct spg {
     int64_t next_vbl_begin;  /* event is seen once cpu.cycles > this */
     int64_t next_vbl_end;
     uint32_t vbl_end_count;
+    int64_t next_snd_update; /* MAME's 50 Hz sound_manager::update */
+    uint32_t snd_update_count;
     unsigned __int128 vblank_start_as;
 
     /* replay: peripheral reads return MAME's recorded values */

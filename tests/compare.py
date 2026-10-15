@@ -3,7 +3,7 @@
 
   compare.py trace  <mame trace.tr> <ours.tr>      first diverging instruction
   compare.py frames <mame frames.bin> <ours.bin>   per-frame RAM / video RAM differences
-  compare.py io     <mame io.log> <ours.log>       peripheral write sequence (and read addresses)
+  compare.py io     <mame io.log> <ours.log>       peripheral write and read sequences
 """
 import struct
 import sys
@@ -95,9 +95,7 @@ def cmp_io(ref, ours):
     for kind in ("W", "R"):
         n = 0
         for x, y in zip(io_records(ref, kind), io_records(ours, kind)):
-            # for reads only the address sequence is meaningful (values are replayed)
-            same = x == y if kind == "W" else x[:2] == y[:2]
-            if not same:
+            if x != y:
                 print(f"io {kind}: diverged after {n} records: mame {x} ours {y}")
                 rc = 1
                 break

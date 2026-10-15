@@ -1,7 +1,7 @@
 /* Headless runner for the jak_batm reconstruction.
  *
  *   batman-rt <batman.bin> [--frames N] [--replay io.log] [--iolog out.log]
- *             [--dump frames.bin] [--trace out.tr --trace-instr N]
+ *             [--dump frames.bin] [--trace out.tr --trace-instr N] [--wav out.wav]
  *
  * --replay feeds MAME's recorded peripheral reads (tools/mame/capture.lua) back in, so the
  * CPU can be checked against MAME before the peripherals are modelled exactly. The outputs
@@ -15,6 +15,28 @@
 #define ROM_WORDS 0x200000
 
 static FILE *dump_out;
+static FILE *wav_out;
+static uint32_t wav_samples;
+
+static void wav_header(FILE *f, uint32_t samples)
+{
+    const uint32_t rate = SPU_RATE, bytes = samples * 4;
+    uint8_t h[44];
+    memcpy(h, "RIFF", 4); *(uint32_t *)(h + 4) = 36 + bytes; memcpy(h + 8, "WAVEfmt ", 8);
+    *(uint32_t *)(h + 16) = 16; *(uint16_t *)(h + 20) = 1; *(uint16_t *)(h + 22) = 2;
+    *(uint32_t *)(h + 24) = rate; *(uint32_t *)(h + 28) = rate * 4; *(uint16_t *)(h + 32) = 4;
+    *(uint16_t *)(h + 34) = 16; memcpy(h + 36, "data", 4); *(uint32_t *)(h + 40) = bytes;
+    fseek(f, 0, SEEK_SET);
+    fwrite(h, 1, sizeof(h), f);
+}
+
+static void wav_sample(void *ctx, int16_t l, int16_t r)
+{
+    (void)ctx;
+    int16_t lr[2] = { l, r };
+    fwrite(lr, 2, 2, wav_out);
+    wav_samples++;
+}
 
 static void dump_frame(spg_t *m)
 {
@@ -54,11 +76,15 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dump = argv[++i];
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) trace_path = argv[++i];
         else if (!strcmp(argv[i], "--trace-instr") && i + 1 < argc) trace_instr = strtoull(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--wav") && i + 1 < argc) {
+            if (!(wav_out = fopen(argv[++i], "wb"))) { perror(argv[i]); return 1; }
+            wav_header(wav_out, 0);
+        }
         else if (argv[i][0] != '-') rom_path = argv[i];
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--frames N] [--replay io.log] [--iolog out] [--dump out] [--trace out --trace-instr N]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--frames N] [--replay io.log] [--iolog out] [--dump out] [--trace out --trace-instr N] [--wav out.wav]\n", argv[0]);
         return 2;
     }
 
@@ -74,6 +100,7 @@ int main(int argc, char **argv)
     if (trace_path && !(trace = fopen(trace_path, "w"))) { perror(trace_path); return 1; }
     if (trace && !trace_instr) trace_instr = UINT64_MAX;
     m.on_frame = dump_frame;
+    if (wav_out) m.spu.out = wav_sample;
 
     spg_reset(&m);
     dump_frame(&m); /* frame 0: MAME's initial frame_update, before the CPU runs */
@@ -93,6 +120,7 @@ int main(int argc, char **argv)
     fprintf(stderr, "ran %u frames, %lld cycles, pc %06x\n", m.frame, (long long)m.cpu.cycles, unsp_lpc(&m.cpu));
     if (m.iolog) fclose(m.iolog);
     if (dump_out) fclose(dump_out);
+    if (wav_out) { wav_header(wav_out, wav_samples); fclose(wav_out); }
     if (trace) fclose(trace);
     return ok && !m.replay_diverged ? 0 : 1;
 }

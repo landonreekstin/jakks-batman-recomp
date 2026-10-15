@@ -25,15 +25,15 @@ PPU/SPU work.
   It matches MAME's instruction trace exactly: 1,832,220 instructions over 20 frames, IRQ
   timing included.
 - **Machine** `recomp/src/spg.c`: memory map, PPU registers/IRQ, GPIO, the DS register, and
-  MAME-identical scheduling (vblank / scanline counter). `recomp/src/i2c.c` is the 24C04 save
-  EEPROM.
-- **Checked against MAME**, boot → title, 1500 frames:
-  - With SPU status reads replayed from MAME: all 1500 frames identical (RAM + video RAM),
-    all 134,946 peripheral writes identical.
-  - Fully standalone: identical up to frame 613, after which only the sound driver drifts
-    (1430/1500 frames identical). The cause is that `0x340B`/`0x340F` (SPU channel status)
-    are not modelled yet.
-- Not done: SPU model, PPU renderer, SDL front end, input, static recompiler.
+  MAME-identical scheduling (vblank, scanline counter, 50 Hz sound-stream updates).
+  `recomp/src/i2c.c` is the 24C04 save EEPROM. `recomp/src/spu.c` is the 16-channel SPU,
+  ported from MAME's `spg2xx_audio` with its quirks kept.
+- **Checked against MAME**, boot → title, 1500 frames, fully standalone (no replay):
+  1500/1500 frames identical (RAM + video RAM). All 134,946 peripheral writes and all
+  38,476 reads are identical, values included. The audio (`--wav`, 70312 Hz) follows MAME's
+  `-wavwrite` loudness envelope with correlation 0.998 at the same level.
+- Not done: PPU renderer, SDL front end, input, static recompiler. Only boot → title has
+  been compared so far, with no input.
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.
 
 ## How to check

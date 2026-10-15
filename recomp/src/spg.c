@@ -5,6 +5,8 @@
  *   - The screen is 320x262 at 60 Hz with the visible area ending at line 239. MAME starts
  *     the machine at the beginning of VBLANK, so vblank_begin k happens at k * FRAME_AS
  *     (k >= 1) and vblank_end at k * FRAME_AS + 22 lines.
+ *   - The SPU only advances when MAME updates its sound stream: every 1/50 s, and before
+ *     wave-in writes. An update at time t renders samples up to floor(t * 70312) inclusive.
  *   - A timer at time T is seen at the first instruction boundary where
  *     cycles > floor(T / ASPC) (the CPU overshoots its timeslice), and an IRQ it raises is
  *     taken after the next instruction.
@@ -24,6 +26,8 @@ typedef unsigned __int128 u128;
 #define SCAN_AS   (FRAME_AS / SCREEN_H)
 #define PIXEL_AS  (FRAME_AS / (SCREEN_H * SCREEN_W))
 #define VBLANK_AS (SCAN_AS * (SCREEN_H - VIS_H))
+#define SOUND_UPDATE_AS 20000000000000000ULL /* STREAMS_UPDATE_FREQUENCY = 50 Hz */
+#define AS_PER_SEC 1000000000000000000ULL
 
 /* PPU registers (offsets from 0x2800) */
 #define V_IRQ_ENABLE 0x62
@@ -54,6 +58,30 @@ static int vpos(const spg_t *m)
 
 static uint16_t rom_read(const spg_t *m, uint32_t addr) { return m->rom[addr & 0x1fffff]; }
 
+/* ---- SPU ---------------------------------------------------------------------------- */
+
+static uint16_t bus_read(void *ctx, uint32_t addr);
+
+static uint16_t spu_space_read(void *ctx, uint32_t addr)
+{
+    spg_t *m = ctx;
+    const uint32_t a = addr & 0x3fffff;
+    if (a < 0x2800) return m->ram[a];
+    if (a >= 0x2900 && a < 0x3000) return m->vram[a - 0x2900];
+    if (a >= 0x2800 && a < 0x3e04 && !(a >= 0x3800 && a < 0x3d00))
+        fprintf(stderr, "spu: sample fetch from I/O %04x not modelled\n", a);
+    return rom_read(m, a);
+}
+
+/* sound_stream::update_nodeps at time t: render up to and including sample floor(t * rate) */
+static void sound_sync(spg_t *m, u128 t_as)
+{
+    if (t_as == 0) return;
+    const uint64_t idx = (uint64_t)(t_as / AS_PER_SEC) * SPU_RATE +
+                         (uint64_t)((t_as % AS_PER_SEC) * SPU_RATE / AS_PER_SEC);
+    if (idx + 1 > m->spu.samples_done) spu_generate(&m->spu, (uint32_t)(idx + 1 - m->spu.samples_done));
+}
+
 /* ---- PPU ---------------------------------------------------------------------------- */
 
 static void video_check_irq(spg_t *m)
@@ -61,8 +89,6 @@ static void video_check_irq(spg_t *m)
     /* fiq_vector stays 0xff (FIQ_SEL never written), so the video IRQ goes to IRQ0 */
     unsp_set_line(&m->cpu, UNSP_IRQ0_LINE, (m->vregs[V_IRQ_STATUS] & m->vregs[V_IRQ_ENABLE]) != 0);
 }
-
-static uint16_t bus_read(void *ctx, uint32_t addr);
 
 static uint16_t video_r(spg_t *m, uint32_t off)
 {
@@ -189,7 +215,7 @@ static int replayed(uint32_t a)
 static uint16_t periph_read(spg_t *m, uint32_t a)
 {
     if (a < 0x2900) return video_r(m, a - 0x2800);
-    if (a < 0x3800) return m->aregs[a - 0x3000];
+    if (a < 0x3800) return spu_read(&m->spu, a - 0x3000);
     if (a < 0x3e00) return io_r(m, a - 0x3d00);
     return m->dmaregs[a - 0x3e00];
 }
@@ -228,7 +254,10 @@ static void bus_write(void *ctx, uint32_t addr, uint16_t data)
     if (!replayed(a)) return; /* ROM */
     if (m->iolog) fprintf(m->iolog, "%u W %04X %04X\n", m->frame + 1, a, data);
     if (a < 0x2900) video_w(m, a - 0x2800, data);
-    else if (a < 0x3800) m->aregs[a - 0x3000] = data;
+    else if (a < 0x3800) {
+        if (a == 0x3410 || a == 0x3411) sound_sync(m, cpu_time_as(m)); /* wave in: MAME updates the stream */
+        spu_write(&m->spu, a - 0x3000, data);
+    }
     else if (a < 0x3e00) io_w(m, a - 0x3d00, data);
     else m->dmaregs[a - 0x3e00] = data;
 }
@@ -242,6 +271,8 @@ int spg_init(spg_t *m, const uint16_t *rom)
     m->cpu.ctx = m;
     m->cpu.read = bus_read;
     m->cpu.write = bus_write;
+    m->spu.ctx = m;
+    m->spu.read = spu_space_read;
     eeprom_init(&m->eeprom);
     return 1;
 }
@@ -254,9 +285,7 @@ void spg_reset(spg_t *m)
     m->vregs[0x3c] = 0x0020; /* renderer reset values */
     m->vregs[0x42] = 0x0001;
     memset(m->vram, 0, sizeof(m->vram));
-    memset(m->aregs, 0, sizeof(m->aregs));
-    m->aregs[0x400 + 0x14] = 0x3f; /* AUDIO_CHANNEL_REPEAT */
-    m->aregs[0x400 + 0x15] = 0x3f; /* AUDIO_CHANNEL_ENV_MODE */
+    spu_reset(&m->spu);
     memset(m->ioregs, 0, sizeof(m->ioregs));
     m->ioregs[0x23] = 0x0028; /* external memory control */
     m->ioregs[IO_PRNG1] = 0x1418;
@@ -267,6 +296,8 @@ void spg_reset(spg_t *m)
     m->vbl_end_count = 1;
     m->next_vbl_begin = event_threshold((u128)FRAME_AS);
     m->next_vbl_end = event_threshold((u128)FRAME_AS + VBLANK_AS);
+    m->snd_update_count = 1;
+    m->next_snd_update = event_threshold((u128)SOUND_UPDATE_AS);
 }
 
 void spg_trace_line(spg_t *m, FILE *f)
@@ -279,6 +310,11 @@ void spg_trace_line(spg_t *m, FILE *f)
 int spg_run_frame(spg_t *m, FILE *trace, uint64_t *trace_budget)
 {
     for (;;) {
+        if (m->cpu.cycles > m->next_snd_update) {
+            sound_sync(m, (u128)m->snd_update_count * SOUND_UPDATE_AS);
+            m->snd_update_count++;
+            m->next_snd_update = event_threshold((u128)m->snd_update_count * SOUND_UPDATE_AS);
+        }
         if (m->cpu.cycles > m->next_vbl_end) {
             m->vregs[V_IRQ_STATUS] &= ~1;
             video_check_irq(m);
