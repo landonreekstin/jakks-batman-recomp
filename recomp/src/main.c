@@ -142,7 +142,7 @@ int main(int argc, char **argv)
     if (trace && !trace_instr) trace_instr = UINT64_MAX;
     m.on_frame = dump_frame;
     if (wav_out) m.spu.out = wav_sample;
-    m.render = snap_dir != NULL;
+    m.render = snap_dir != NULL || getenv("BATMAN_RENDER") != NULL;
 
     spg_reset(&m);
     dump_frame(&m); /* frame 0: MAME's initial frame_update, before the CPU runs */

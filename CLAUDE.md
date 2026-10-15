@@ -34,8 +34,11 @@ PPU/SPU work.
   peripheral writes and 133,165 reads (values included) match, and the rendered frames are
   pixel-identical to MAME snapshots. The audio follows MAME's `-wavwrite` loudness envelope
   with correlation 0.998.
-- Not done: SDL front end, static recompiler. Only 5000 frames (~83 s) of play have been
-  compared so far.
+- **Playable**: `recomp/build/batman` (SDL2) runs the game natively at 60 Hz with sound,
+  keyboard/gamepad and a persistent save file. The core runs about 16x faster than real time
+  (5000 frames with rendering in 5.1 s).
+- Not done: static recompiler (code is still interpreted). Only 5000 frames (~83 s) of play
+  have been compared against MAME so far.
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.
 
 ## How to check
@@ -51,11 +54,19 @@ PPU/SPU work.
 - `tools/mame/capture.lua` makes the MAME reference. `tests/compare.py` does the diffs.
 - `tools/ghidra/SeedAndExport.java`: headless Ghidra pass, exports the function list.
 
+## Playing
+
+`make -C recomp`, then `env -u LD_LIBRARY_PATH recomp/build/batman target/batman.bin`.
+Keys: arrows, Z = A (jump), X = B (attack), C = X (search/use), Enter = Menu, Esc = quit.
+The save goes to `target/batman.sav` (override with `--save`).
+
 ## Tools / quirks
 
 - Disassembly: `unidasm -arch unsp12 -xchbytes`. Ghidra: `unsp:LE:16:default`. naken_asm
   assembles only. MAME source is in `$MAME_SRC`.
 - Devshell bug: `mame`/`unidasm` fail with "GLIBC_2.43 not found" because `LD_LIBRARY_PATH`
   points at an alsa-lib built against a newer glibc. Workaround: `env -u LD_LIBRARY_PATH mame ...`.
+  The same variable breaks the SDL front end (sdl2-compat aborts with "Failed loading SDL3
+  library"); the same workaround applies.
 - MAME Lua memory taps are garbage-collected (and silently removed) unless kept referenced.
 - MAME calls `frame_done` at t=0 only with `-debug`, so captures label frames by emulated time.
