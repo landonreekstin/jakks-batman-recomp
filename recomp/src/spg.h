@@ -7,6 +7,7 @@
 #include <stdio.h>
 
 #include "i2c.h"
+#include "ppu.h"
 #include "spu.h"
 #include "unsp.h"
 
@@ -27,6 +28,9 @@ typedef struct spg {
     uint16_t vregs[0x100];  /* 0x2800 PPU */
     uint16_t vram[0x700];   /* 0x2900 scroll, 0x2a00 hcomp, 0x2b00 palette, 0x2c00 sprites */
     spu_t spu;              /* 0x3000-0x37ff */
+    ppu_t ppu;
+    uint32_t framebuffer[PPU_W * PPU_H];
+    int render;             /* render a frame at every vblank, as MAME's screen_update does */
     uint16_t ioregs[0x100]; /* 0x3d00 */
     uint16_t dmaregs[4];    /* 0x3e00 */
 
@@ -40,6 +44,8 @@ typedef struct spg {
     uint32_t vbl_end_count;
     int64_t next_snd_update; /* MAME's 50 Hz sound_manager::update */
     uint32_t snd_update_count;
+    int64_t next_rng_tick;   /* MAME clocks the PRNG from a 1234 Hz timer */
+    uint32_t rng_tick_count;
     unsigned __int128 vblank_start_as;
 
     /* replay: peripheral reads return MAME's recorded values */

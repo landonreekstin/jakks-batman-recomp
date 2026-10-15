@@ -2,6 +2,8 @@
  *
  *   batman-rt <batman.bin> [--frames N] [--replay io.log] [--iolog out.log]
  *             [--dump frames.bin] [--trace out.tr --trace-instr N] [--wav out.wav]
+ *             [--snap dir --snap-frames a,b,c]   (PNG of the frame rendered at vblank N)
+ *             [--input script]   lines "<vblank> <hex mask>", same as capture.lua CAP_INPUT
  *
  * --replay feeds MAME's recorded peripheral reads (tools/mame/capture.lua) back in, so the
  * CPU can be checked against MAME before the peripherals are modelled exactly. The outputs
@@ -10,12 +12,32 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "png.h"
 #include "spg.h"
 
 #define ROM_WORDS 0x200000
 
 static FILE *dump_out;
 static FILE *wav_out;
+static const char *snap_dir;
+static char snap_frames[4096];
+static struct { uint32_t frame; uint16_t mask; } inputs[4096];
+static int n_inputs;
+
+static int load_inputs(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    char line[256];
+    unsigned fr, mask;
+    while (fgets(line, sizeof(line), f) && n_inputs < 4096)
+        if (sscanf(line, "%u %x", &fr, &mask) == 2) {
+            inputs[n_inputs].frame = fr;
+            inputs[n_inputs++].mask = (uint16_t)mask;
+        }
+    fclose(f);
+    return 1;
+}
 static uint32_t wav_samples;
 
 static void wav_header(FILE *f, uint32_t samples)
@@ -38,8 +60,22 @@ static void wav_sample(void *ctx, int16_t l, int16_t r)
     wav_samples++;
 }
 
+static int want_snap(uint32_t frame)
+{
+    char key[16];
+    snprintf(key, sizeof(key), ",%u,", frame);
+    return strstr(snap_frames, key) != NULL;
+}
+
 static void dump_frame(spg_t *m)
 {
+    for (int i = 0; i < n_inputs; i++)
+        if (inputs[i].frame == m->frame) m->buttons = inputs[i].mask;
+    if (snap_dir && m->frame && want_snap(m->frame)) {
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/f%05u.png", snap_dir, m->frame);
+        if (!png_write_xrgb(path, m->framebuffer, PPU_W, PPU_H)) perror(path);
+    }
     if (!dump_out) return;
     uint32_t fr = m->frame;
     uint64_t cyc = (uint64_t)m->cpu.cycles;
@@ -76,6 +112,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--dump") && i + 1 < argc) dump = argv[++i];
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) trace_path = argv[++i];
         else if (!strcmp(argv[i], "--trace-instr") && i + 1 < argc) trace_instr = strtoull(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--snap") && i + 1 < argc) snap_dir = argv[++i];
+        else if (!strcmp(argv[i], "--input") && i + 1 < argc) {
+            if (!load_inputs(argv[++i])) { perror(argv[i]); return 1; }
+        }
+        else if (!strcmp(argv[i], "--snap-frames") && i + 1 < argc) snprintf(snap_frames, sizeof(snap_frames), ",%s,", argv[++i]);
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) {
             if (!(wav_out = fopen(argv[++i], "wb"))) { perror(argv[i]); return 1; }
             wav_header(wav_out, 0);
@@ -84,7 +125,7 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--frames N] [--replay io.log] [--iolog out] [--dump out] [--trace out --trace-instr N] [--wav out.wav]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--frames N] [--replay io.log] [--iolog out] [--dump out] [--trace out --trace-instr N] [--wav out.wav] [--snap dir --snap-frames a,b]\n", argv[0]);
         return 2;
     }
 
@@ -101,6 +142,7 @@ int main(int argc, char **argv)
     if (trace && !trace_instr) trace_instr = UINT64_MAX;
     m.on_frame = dump_frame;
     if (wav_out) m.spu.out = wav_sample;
+    m.render = snap_dir != NULL;
 
     spg_reset(&m);
     dump_frame(&m); /* frame 0: MAME's initial frame_update, before the CPU runs */

@@ -7,6 +7,7 @@
  *     (k >= 1) and vblank_end at k * FRAME_AS + 22 lines.
  *   - The SPU only advances when MAME updates its sound stream: every 1/50 s, and before
  *     wave-in writes. An update at time t renders samples up to floor(t * 70312) inclusive.
+ *   - The PRNG (0x3d2c/0x3d2d) steps on every read and on MAME's 1234 Hz timer.
  *   - A timer at time T is seen at the first instruction boundary where
  *     cycles > floor(T / ASPC) (the CPU overshoots its timeslice), and an IRQ it raises is
  *     taken after the next instruction.
@@ -28,6 +29,7 @@ typedef unsigned __int128 u128;
 #define VBLANK_AS (SCAN_AS * (SCREEN_H - VIS_H))
 #define SOUND_UPDATE_AS 20000000000000000ULL /* STREAMS_UPDATE_FREQUENCY = 50 Hz */
 #define AS_PER_SEC 1000000000000000000ULL
+#define RNG_TICK_AS (AS_PER_SEC / 1234)
 
 /* PPU registers (offsets from 0x2800) */
 #define V_IRQ_ENABLE 0x62
@@ -62,14 +64,15 @@ static uint16_t rom_read(const spg_t *m, uint32_t addr) { return m->rom[addr & 0
 
 static uint16_t bus_read(void *ctx, uint32_t addr);
 
-static uint16_t spu_space_read(void *ctx, uint32_t addr)
+/* side-effect-free read for the SPU and PPU (MAME reads through the CPU space; they only touch RAM/ROM here) */
+static uint16_t space_read(void *ctx, uint32_t addr)
 {
     spg_t *m = ctx;
     const uint32_t a = addr & 0x3fffff;
     if (a < 0x2800) return m->ram[a];
     if (a >= 0x2900 && a < 0x3000) return m->vram[a - 0x2900];
     if (a >= 0x2800 && a < 0x3e04 && !(a >= 0x3800 && a < 0x3d00))
-        fprintf(stderr, "spu: sample fetch from I/O %04x not modelled\n", a);
+        fprintf(stderr, "spg: SPU/PPU fetch from I/O %04x not modelled\n", a);
     return rom_read(m, a);
 }
 
@@ -114,6 +117,10 @@ static void video_w(spg_t *m, uint32_t off, uint16_t data)
     switch (off) {
     case 0x10: case 0x16: m->vregs[off] = data & 0x01ff; break; /* X scroll */
     case 0x11: case 0x17: m->vregs[off] = data & 0x00ff; break; /* Y scroll */
+    case 0x1c: case 0x1d: case 0x1e:
+        m->vregs[off] = data;
+        ppu_update_vcmp(&m->ppu, m->vregs[0x1c], m->vregs[0x1d], m->vregs[0x1e]);
+        break;
     case 0x2a: m->vregs[off] = data & 0x0003; break;
     case 0x30: m->vregs[off] = data & 0x00ff; break;
     case 0x36: case 0x37:
@@ -163,6 +170,13 @@ static void do_gpio(spg_t *m, uint32_t offset, int write)
     m->ioregs[5 * i + 1] = what;
 }
 
+static uint16_t clock_rng(spg_t *m, int which)
+{
+    const uint16_t v = m->ioregs[IO_PRNG1 + which];
+    m->ioregs[IO_PRNG1 + which] = (uint16_t)(((v << 1) | (((v >> 14) ^ (v >> 13)) & 1)) & 0x7fff);
+    return v;
+}
+
 static uint16_t io_r(spg_t *m, uint32_t off)
 {
     switch (off) {
@@ -171,6 +185,8 @@ static uint16_t io_r(spg_t *m, uint32_t off)
         return m->ioregs[off];
     case IO_VERT_LINE: return (uint16_t)vpos(m);
     case IO_NTSC_PAL: return 0; /* NTSC */
+    case IO_PRNG1: return clock_rng(m, 0);
+    case IO_PRNG2: return clock_rng(m, 1);
     case IO_DATA_SEGMENT: return (m->cpu.r[REG_SR] >> 10) & 0x3f;
     default: return m->ioregs[off];
     }
@@ -272,7 +288,7 @@ int spg_init(spg_t *m, const uint16_t *rom)
     m->cpu.read = bus_read;
     m->cpu.write = bus_write;
     m->spu.ctx = m;
-    m->spu.read = spu_space_read;
+    m->spu.read = space_read;
     eeprom_init(&m->eeprom);
     return 1;
 }
@@ -286,6 +302,7 @@ void spg_reset(spg_t *m)
     m->vregs[0x42] = 0x0001;
     memset(m->vram, 0, sizeof(m->vram));
     spu_reset(&m->spu);
+    ppu_init(&m->ppu);
     memset(m->ioregs, 0, sizeof(m->ioregs));
     m->ioregs[0x23] = 0x0028; /* external memory control */
     m->ioregs[IO_PRNG1] = 0x1418;
@@ -298,6 +315,8 @@ void spg_reset(spg_t *m)
     m->next_vbl_end = event_threshold((u128)FRAME_AS + VBLANK_AS);
     m->snd_update_count = 1;
     m->next_snd_update = event_threshold((u128)SOUND_UPDATE_AS);
+    m->rng_tick_count = 1;
+    m->next_rng_tick = event_threshold((u128)RNG_TICK_AS);
 }
 
 void spg_trace_line(spg_t *m, FILE *f)
@@ -310,6 +329,12 @@ void spg_trace_line(spg_t *m, FILE *f)
 int spg_run_frame(spg_t *m, FILE *trace, uint64_t *trace_budget)
 {
     for (;;) {
+        if (m->cpu.cycles > m->next_rng_tick) {
+            clock_rng(m, 0);
+            clock_rng(m, 1);
+            m->rng_tick_count++;
+            m->next_rng_tick = event_threshold((u128)m->rng_tick_count * RNG_TICK_AS);
+        }
         if (m->cpu.cycles > m->next_snd_update) {
             sound_sync(m, (u128)m->snd_update_count * SOUND_UPDATE_AS);
             m->snd_update_count++;
@@ -325,6 +350,10 @@ int spg_run_frame(spg_t *m, FILE *trace, uint64_t *trace_budget)
             m->frame++;
             m->vblank_start_as = (u128)m->frame * FRAME_AS;
             m->next_vbl_begin = event_threshold((u128)(m->frame + 1) * FRAME_AS);
+            if (m->render) {
+                const ppu_mem_t mem = { m->vregs, m->vram, m->vram + 0x200, m->vram + 0x300, m, space_read };
+                ppu_render(&m->ppu, &mem, m->framebuffer);
+            }
             if (m->on_frame) m->on_frame(m); /* MAME's frame_update runs before the vblank callbacks */
             if (m->vregs[V_IRQ_ENABLE] & 1) {
                 m->vregs[V_IRQ_STATUS] |= 1;

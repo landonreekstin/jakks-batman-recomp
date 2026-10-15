@@ -4,9 +4,12 @@
   compare.py trace  <mame trace.tr> <ours.tr>      first diverging instruction
   compare.py frames <mame frames.bin> <ours.bin>   per-frame RAM / video RAM differences
   compare.py io     <mame io.log> <ours.log>       peripheral write and read sequences
+  compare.py snaps  <mame dir> <ours dir>          pixel diff of fNNNNN.png snapshots
 """
+import os
 import struct
 import sys
+import zlib
 
 RAM_WORDS = 0x2800
 VRAM_WORDS = 0x700
@@ -105,11 +108,72 @@ def cmp_io(ref, ours):
     return rc
 
 
+def read_png(path):
+    """RGB(A) 8-bit non-interlaced PNG -> (w, h, list of rows of (r, g, b))."""
+    with open(path, "rb") as f:
+        data = f.read()
+    pos, idat, w = 8, b"", 0
+    while pos < len(data):
+        n, typ = struct.unpack_from(">I4s", data, pos)
+        body = data[pos + 8:pos + 8 + n]
+        if typ == b"IHDR":
+            w, h, depth, ctype = struct.unpack_from(">IIBB", body)
+            assert depth == 8 and ctype in (2, 6), f"{path}: unsupported PNG"
+            bpp = 3 if ctype == 2 else 4
+        elif typ == b"IDAT":
+            idat += body
+        pos += 12 + n
+    raw = zlib.decompress(idat)
+    stride = w * bpp
+    rows, prev = [], bytearray(stride)
+    for y in range(h):
+        ft = raw[y * (stride + 1)]
+        line = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for i in range(stride):
+            a = line[i - bpp] if i >= bpp else 0
+            b = prev[i]
+            c = prev[i - bpp] if i >= bpp else 0
+            if ft == 1: line[i] = (line[i] + a) & 255
+            elif ft == 2: line[i] = (line[i] + b) & 255
+            elif ft == 3: line[i] = (line[i] + (a + b) // 2) & 255
+            elif ft == 4:
+                pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+        rows.append([tuple(line[x * bpp:x * bpp + 3]) for x in range(w)])
+        prev = line
+    return w, h, rows
+
+
+def cmp_snaps(ref_dir, our_dir):
+    bad = 0
+    names = sorted(n for n in os.listdir(ref_dir) if n.startswith("f") and n.endswith(".png"))
+    for name in names:
+        ours = os.path.join(our_dir, name)
+        if not os.path.exists(ours):
+            print(f"{name}: missing in ours")
+            bad += 1
+            continue
+        wa, ha, a = read_png(os.path.join(ref_dir, name))
+        wb, hb, b = read_png(ours)
+        if (wa, ha) != (wb, hb):
+            print(f"{name}: size {wa}x{ha} vs {wb}x{hb}")
+            bad += 1
+            continue
+        diff = [(x, y) for y in range(ha) for x in range(wa) if a[y][x] != b[y][x]]
+        if diff:
+            bad += 1
+            x, y = diff[0]
+            print(f"{name}: {len(diff)} pixels differ, first at ({x},{y}) mame {a[y][x]} ours {b[y][x]}")
+    print(f"snaps: {len(names) - bad}/{len(names)} identical")
+    return 1 if bad else 0
+
+
 def main():
-    if len(sys.argv) != 4 or sys.argv[1] not in ("trace", "frames", "io"):
+    cmds = {"trace": cmp_trace, "frames": cmp_frames, "io": cmp_io, "snaps": cmp_snaps}
+    if len(sys.argv) != 4 or sys.argv[1] not in cmds:
         print(__doc__)
         return 2
-    return {"trace": cmp_trace, "frames": cmp_frames, "io": cmp_io}[sys.argv[1]](sys.argv[2], sys.argv[3])
+    return cmds[sys.argv[1]](sys.argv[2], sys.argv[3])
 
 
 if __name__ == "__main__":
