@@ -7,6 +7,8 @@
  *             [--state-save-at N file] [--state-load file]
  *             [--filter mode]    write --snap PNGs through a CRT filter (crt.h), at 4x
  *             [--mods a,b [--mods-dir dir]]   runtime mods (mod.h); default dir "mods"
+ *             [--romcov out.bin] ROM usage map: per ROM-space word a byte of SPG_COV_* bits, then
+ *                                its first vblank as u32 (tools/romcov.py reads it)
  *             [--bake out.bin]   write the ROM file with the mods' patches applied, for MAME
  *
  * --replay feeds MAME's recorded peripheral reads (tools/mame/capture.lua) back in, so the
@@ -131,7 +133,7 @@ int main(int argc, char **argv)
     const char *rom_path = NULL, *replay = NULL, *iolog = NULL, *dump = NULL, *trace_path = NULL;
     unsigned frames = 600;
     uint64_t trace_instr = 0;
-    const char *state_save = NULL, *state_load = NULL, *mod_list = NULL, *mods_dir = "mods", *bake = NULL;
+    const char *state_save = NULL, *state_load = NULL, *mod_list = NULL, *mods_dir = "mods", *bake = NULL, *romcov = NULL;
     unsigned state_save_at = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -150,6 +152,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
         else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
         else if (!strcmp(argv[i], "--bake") && i + 1 < argc) bake = argv[++i];
+        else if (!strcmp(argv[i], "--romcov") && i + 1 < argc) romcov = argv[++i];
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             if ((snap_filter = crt_mode_parse(argv[++i])) < 0) { fprintf(stderr, "unknown filter %s\n", argv[i]); return 2; }
             snap_crt = crt_new(4);
@@ -180,6 +183,10 @@ int main(int argc, char **argv)
     static spg_t m;
     spg_init(&m, rom);
     mods_attach(&m);
+    if (romcov) {
+        m.romcov = calloc(ROM_SPACE_WORDS, 1);
+        m.romcov_first = calloc(ROM_SPACE_WORDS, 4);
+    }
     if (replay && !spg_load_replay(&m, replay)) { perror(replay); return 1; }
     if (iolog && !(m.iolog = fopen(iolog, "w"))) { perror(iolog); return 1; }
     if (dump && !(dump_out = fopen(dump, "wb"))) { perror(dump); return 1; }
@@ -217,6 +224,14 @@ int main(int argc, char **argv)
                 fprintf(stderr, "  model differs from MAME at %04X: %u reads\n", 0x2800 + a, m.model_mismatch[a]);
     }
     fprintf(stderr, "ran %u frames, %lld cycles, pc %06x\n", m.frame, (long long)m.cpu.cycles, unsp_lpc(&m.cpu));
+    if (romcov) {
+        FILE *f = fopen(romcov, "wb");
+        if (!f || fwrite(m.romcov, 1, ROM_SPACE_WORDS, f) != ROM_SPACE_WORDS ||
+            fwrite(m.romcov_first, 4, ROM_SPACE_WORDS, f) != ROM_SPACE_WORDS || fclose(f)) {
+            perror(romcov);
+            ok = 0;
+        }
+    }
     if (m.iolog) fclose(m.iolog);
     if (dump_out) fclose(dump_out);
     if (wav_out) { wav_header(wav_out, wav_samples); fclose(wav_out); }

@@ -90,8 +90,10 @@ recording, since the script would no longer describe one uninterrupted run. Both
 
 See `mods/README.md`. Run `batman`/`batman-rt` with `--mods a,b`; the SDL build also reads
 `mods/enabled.txt`. `MODS=a,b tests/check.sh` compares a data mod with MAME, which runs the ROM
-file baked with `batman-rt --bake`. Content RE for new levels is the next step: see the plan
-(ROM usage map, graphics, RAM map, level format).
+file baked with `batman-rt --bake`. `batman-rt --romcov map.bin` (with `BATMAN_RENDER=1`) tags every ROM word by
+who reads it; `tools/romcov.py` summarises and draws it. Findings are in `notes/rom-usage.md`:
+so far nothing above word 0x100000 is ever read, so that space looks free for new content.
+Next: more play sessions, then graphics, RAM map and level format.
 
 ## Tools / quirks
 

@@ -13,6 +13,8 @@
 
 #define SPG_CLOCK 27000000
 
+enum { SPG_COV_FETCH = 1, SPG_COV_DATA = 2, SPG_COV_PPU = 4, SPG_COV_SPU = 8 };
+
 /* one peripheral access, as logged by tools/mame/capture.lua */
 typedef struct io_rec {
     uint32_t frame;
@@ -56,6 +58,10 @@ typedef struct spg {
 
     FILE *iolog;             /* our own accesses, same format as capture.lua (frame labels start at 1) */
     void (*on_frame)(struct spg *m);
+
+    /* ROM usage map (--romcov): per ROM-space word, SPG_COV_* bits and the first vblank */
+    uint8_t *romcov;
+    uint32_t *romcov_first;
 
     /* PC hooks for mods (mod.c): one bit per word address; pc_hook returns 1 if it moved PC */
     const uint8_t *hook_map;

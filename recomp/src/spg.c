@@ -64,6 +64,12 @@ static uint16_t rom_read(const spg_t *m, uint32_t addr) { return m->rom[addr & 0
 
 static uint16_t bus_read(void *ctx, uint32_t addr);
 
+static void cover(spg_t *m, uint32_t a, uint8_t kind)
+{
+    if (!m->romcov[a]) m->romcov_first[a] = m->frame;
+    m->romcov[a] |= kind;
+}
+
 /* side-effect-free read for the SPU and PPU (MAME reads through the CPU space; they only touch RAM/ROM here) */
 static uint16_t space_read(void *ctx, uint32_t addr)
 {
@@ -74,6 +80,20 @@ static uint16_t space_read(void *ctx, uint32_t addr)
     if (a >= 0x2800 && a < 0x3e04 && !(a >= 0x3800 && a < 0x3d00))
         fprintf(stderr, "spg: SPU/PPU fetch from I/O %04x not modelled\n", a);
     return rom_read(m, a);
+}
+
+static uint16_t ppu_read(void *ctx, uint32_t addr)
+{
+    spg_t *m = ctx;
+    if (m->romcov && (addr & 0x3fffff) >= 0x2800) cover(m, addr & 0x3fffff, SPG_COV_PPU);
+    return space_read(ctx, addr);
+}
+
+static uint16_t spu_space_read(void *ctx, uint32_t addr)
+{
+    spg_t *m = ctx;
+    if (m->romcov && (addr & 0x3fffff) >= 0x2800) cover(m, addr & 0x3fffff, SPG_COV_SPU);
+    return space_read(ctx, addr);
 }
 
 /* sound_stream::update_nodeps at time t: render up to and including sample floor(t * rate) */
@@ -242,7 +262,10 @@ static uint16_t bus_read(void *ctx, uint32_t addr)
     const uint32_t a = addr & 0x3fffff;
     if (a < 0x2800) return m->ram[a];
     if (a >= 0x2900 && a < 0x3000) return m->vram[a - 0x2900];
-    if (!replayed(a)) return rom_read(m, a); /* ROM, including the holes in the I/O page */
+    if (!replayed(a)) { /* ROM, including the holes in the I/O page */
+        if (m->romcov) cover(m, a, a == unsp_lpc(&m->cpu) ? SPG_COV_FETCH : SPG_COV_DATA);
+        return rom_read(m, a);
+    }
 
     uint16_t v = periph_read(m, a);
     if (m->replay && !m->replay_diverged) {
@@ -288,7 +311,7 @@ int spg_init(spg_t *m, const uint16_t *rom)
     m->cpu.read = bus_read;
     m->cpu.write = bus_write;
     m->spu.ctx = m;
-    m->spu.read = space_read;
+    m->spu.read = spu_space_read;
     eeprom_init(&m->eeprom);
     return 1;
 }
@@ -336,7 +359,7 @@ uint16_t spg_peek(spg_t *m, uint32_t addr)
 
 void spg_render(spg_t *m)
 {
-    const ppu_mem_t mem = { m->vregs, m->vram, m->vram + 0x200, m->vram + 0x300, m, space_read };
+    const ppu_mem_t mem = { m->vregs, m->vram, m->vram + 0x200, m->vram + 0x300, m, ppu_read };
     ppu_render(&m->ppu, &mem, m->framebuffer);
 }
 
