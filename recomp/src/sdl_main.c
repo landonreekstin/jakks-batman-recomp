@@ -1,26 +1,37 @@
 /* SDL2 front end: play The Batman natively.
  *
- *   batman <batman.bin> [--save file.sav] [--scale N] [--frames N] [--record script.txt]
+ *   batman <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N]
+ *                       [--record script.txt]
  *
  * Keys: arrows = joypad, Z = A (jump), X = B (attack), C = X (search/use),
  *       Enter = Menu, Esc = quit. Game controllers are mapped the same way
  *       (south = A, west = B, north = X, start = Menu).
  *       F5 = save state, F8 = load state, F6/F7 = previous/next slot (0-9),
- *       Backspace (hold) = rewind. States go to <save file minus .sav>.st<slot>.
- * The 24C04 save EEPROM is kept in --save (default batman.sav next to the ROM).
+ *       Backspace (hold) = rewind, Tab (hold) = fast forward,
+ *       F9 / Shift+F9 = next/previous CRT filter, F11 = fullscreen, F12 = screenshot.
+ * The 24C04 save EEPROM is kept in --save (default batman.sav next to the ROM). States go
+ * to <save file minus .sav>.st<slot>, screenshots to <save file minus .sav>-NNNN.png.
  *
  * --record writes the controller state as an input script (tests/inputs format), so
  * the session can be replayed in MAME and batman-rt by tests/check.sh. A recording
  * starts from a blank EEPROM, like the MAME capture, and saves to <script>.sav. */
 #include <SDL.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
+#include "crt.h"
+#include "osd.h"
+#include "png.h"
 #include "spg.h"
 #include "state.h"
 
 #define ROM_WORDS 0x200000
+#define OUT_SCALE 4   /* filter output is 1280x960; SDL scales that to the window */
+#define FF_FRAMES 4   /* emulated frames per displayed frame while fast-forwarding */
+#define OSD_FRAMES 120
 
 enum {
     BTN_UP = 0x8000, BTN_DOWN = 0x4000, BTN_LEFT = 0x2000, BTN_RIGHT = 0x1000,
@@ -30,6 +41,7 @@ enum {
 static SDL_AudioDeviceID audio_dev;
 static int16_t audio_buf[4096 * 2];
 static int audio_len;
+static int audio_mute; /* fast forward: generate but drop */
 
 static void audio_sample(void *ctx, int16_t l, int16_t r)
 {
@@ -37,14 +49,14 @@ static void audio_sample(void *ctx, int16_t l, int16_t r)
     audio_buf[audio_len * 2] = l;
     audio_buf[audio_len * 2 + 1] = r;
     if (++audio_len == 4096) {
-        if (audio_dev) SDL_QueueAudio(audio_dev, audio_buf, sizeof(audio_buf));
+        if (audio_dev && !audio_mute) SDL_QueueAudio(audio_dev, audio_buf, sizeof(audio_buf));
         audio_len = 0;
     }
 }
 
 static void audio_flush(void)
 {
-    if (audio_dev && audio_len) SDL_QueueAudio(audio_dev, audio_buf, (Uint32)(audio_len * 4));
+    if (audio_dev && audio_len && !audio_mute) SDL_QueueAudio(audio_dev, audio_buf, (Uint32)(audio_len * 4));
     audio_len = 0;
 }
 
@@ -72,6 +84,18 @@ static int rewind_pop(spg_t *m)
     return 1;
 }
 
+static char osd_msg[96];
+static int osd_left;
+
+static void osd(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(osd_msg, sizeof(osd_msg), fmt, ap);
+    va_end(ap);
+    osd_left = OSD_FRAMES;
+}
+
 /* a recording only replays if the run was uninterrupted, so it ends at a state load or rewind */
 static void stop_recording(FILE **rec, const char *path, uint32_t frame)
 {
@@ -79,13 +103,6 @@ static void stop_recording(FILE **rec, const char *path, uint32_t frame)
     fclose(*rec);
     *rec = NULL;
     fprintf(stderr, "recorded %u vblanks to %s\n", frame, path);
-}
-
-static void set_title(SDL_Window *win, int slot, const char *msg)
-{
-    char t[256];
-    snprintf(t, sizeof(t), "The Batman  [slot %d]%s%s", slot, msg ? "  " : "", msg ? msg : "");
-    SDL_SetWindowTitle(win, t);
 }
 
 static uint16_t *load_rom(const char *path)
@@ -139,11 +156,22 @@ static uint16_t read_buttons(SDL_GameController *pad)
     return b;
 }
 
+/* the next free <base>-NNNN.png */
+static int screenshot(const char *base, const uint32_t *px, int w, int h, char *path, size_t pathlen)
+{
+    struct stat st;
+    for (int i = 0; i < 10000; i++) {
+        snprintf(path, pathlen, "%s-%04d.png", base, i);
+        if (stat(path, &st)) return png_write_xrgb(path, px, w, h);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *rom_path = NULL;
     char save_path[1024] = "";
-    int scale = 3;
+    int scale = 3, filter = CRT_NONE;
     long max_frames = -1;
     const char *record_path = NULL;
     for (int i = 1; i < argc; i++) {
@@ -151,11 +179,17 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) max_frames = atol(argv[++i]);
         else if (!strcmp(argv[i], "--record") && i + 1 < argc) record_path = argv[++i];
+        else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
+            if ((filter = crt_mode_parse(argv[++i])) < 0) {
+                fprintf(stderr, "unknown filter %s (none, scanlines, aperture, composite, crt)\n", argv[i]);
+                return 2;
+            }
+        }
         else if (argv[i][0] != '-') rom_path = argv[i];
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--frames N] [--record script.txt]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt]\n", argv[0]);
         return 2;
     }
     FILE *rec = NULL;
@@ -171,6 +205,12 @@ int main(int argc, char **argv)
         if (dot && !strchr(dot, '/')) *dot = 0;
         strncat(save_path, ".sav", sizeof(save_path) - strlen(save_path) - 1);
     }
+    char base[1024]; /* save path without .sav: states and screenshots hang off it */
+    snprintf(base, sizeof(base), "%s", save_path);
+    {
+        const size_t n = strlen(base);
+        if (n > 4 && !strcmp(base + n - 4, ".sav")) base[n - 4] = 0;
+    }
 
     uint16_t *rom = load_rom(rom_path);
     if (!rom) return 1;
@@ -183,16 +223,14 @@ int main(int argc, char **argv)
     }
     uint8_t rom_hash[32];
     spg_rom_hash(rom, rom_hash);
-    char state_base[1024];
-    snprintf(state_base, sizeof(state_base), "%s", save_path);
-    {
-        const size_t n = strlen(state_base);
-        if (n > 4 && !strcmp(state_base + n - 4, ".sav")) state_base[n - 4] = 0;
-    }
     int slot = 0;
     spg_reset(&m);
     m.render = 1;
     m.spu.out = audio_sample;
+
+    crt_t *crt = crt_new(OUT_SCALE);
+    const int ow = crt_width(crt), oh = crt_height(crt);
+    uint32_t *outbuf = malloc(sizeof(uint32_t) * ow * oh);
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
@@ -202,8 +240,10 @@ int main(int argc, char **argv)
                                        PPU_W * scale, PPU_H * scale, SDL_WINDOW_RESIZABLE);
     SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
     if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
-    SDL_RenderSetLogicalSize(ren, PPU_W, PPU_H);
-    SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, PPU_W, PPU_H);
+    SDL_RenderSetLogicalSize(ren, ow, oh);
+    SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, ow, oh);
+    /* the filtered image is already 4x: smooth scaling to the window keeps the scanlines even */
+    SDL_SetTextureScaleMode(tex, SDL_ScaleModeLinear);
 
     SDL_AudioSpec want = { 0 }, have;
     want.freq = SPU_RATE;
@@ -214,7 +254,6 @@ int main(int argc, char **argv)
     if (!audio_dev) fprintf(stderr, "no audio: %s\n", SDL_GetError());
     else SDL_PauseAudioDevice(audio_dev, 0);
 
-    set_title(win, slot, NULL);
     SDL_GameController *pad = NULL;
     for (int i = 0; i < SDL_NumJoysticks() && !pad; i++)
         if (SDL_IsGameController(i)) pad = SDL_GameControllerOpen(i);
@@ -222,39 +261,50 @@ int main(int argc, char **argv)
     const Uint64 freq = SDL_GetPerformanceFrequency();
     const double frame_ticks = (double)freq / 60.0;
     double next = (double)SDL_GetPerformanceCounter();
-    int running = 1;
+    int running = 1, shot = 0;
     while (running && (max_frames < 0 || (long)m.frame < max_frames)) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
             else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = 0;
             else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
-                char path[1100], msg[64];
-                snprintf(path, sizeof(path), "%s.st%d", state_base, slot);
+                char path[1100];
+                snprintf(path, sizeof(path), "%s.st%d", base, slot);
                 switch (e.key.keysym.sym) {
                 case SDLK_F5:
-                    snprintf(msg, sizeof(msg), spg_state_save(&m, rom_hash, path) ? "saved" : "save FAILED");
-                    set_title(win, slot, msg);
+                    if (spg_state_save(&m, rom_hash, path)) osd("Saved state %d", slot);
+                    else osd("Save FAILED");
                     break;
                 case SDLK_F8: {
                     const uint32_t was = m.frame;
                     if (spg_state_load(&m, rom_hash, path)) {
-                        snprintf(msg, sizeof(msg), "loaded (vblank %u)", m.frame);
+                        osd("Loaded state %d", slot);
                         if (rec) stop_recording(&rec, record_path, was);
                         if (audio_dev) SDL_ClearQueuedAudio(audio_dev);
                         next = (double)SDL_GetPerformanceCounter();
-                    } else snprintf(msg, sizeof(msg), "no state in slot");
-                    set_title(win, slot, msg);
+                    } else osd("No usable state in slot %d", slot);
                     break;
                 }
-                case SDLK_F6: slot = (slot + 9) % 10; set_title(win, slot, NULL); break;
-                case SDLK_F7: slot = (slot + 1) % 10; set_title(win, slot, NULL); break;
+                case SDLK_F6: slot = (slot + 9) % 10; osd("Slot %d", slot); break;
+                case SDLK_F7: slot = (slot + 1) % 10; osd("Slot %d", slot); break;
+                case SDLK_F9:
+                    filter = (filter + ((e.key.keysym.mod & KMOD_SHIFT) ? CRT_MODES - 1 : 1)) % CRT_MODES;
+                    osd("Filter: %s", crt_mode_name(filter));
+                    break;
+                case SDLK_F11:
+                    SDL_SetWindowFullscreen(win, (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP)
+                                                     ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                    break;
+                case SDLK_F12: shot = 1; break;
                 default: break;
                 }
             }
             else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
         }
-        if (SDL_GetKeyboardState(NULL)[SDL_SCANCODE_BACKSPACE]) {
+
+        const Uint8 *keys = SDL_GetKeyboardState(NULL);
+        const int ff = keys[SDL_SCANCODE_TAB];
+        if (keys[SDL_SCANCODE_BACKSPACE]) {
             /* rewind: step back one snapshot per displayed frame (REWIND_EVERY x speed), silently */
             const uint32_t was = m.frame;
             if (rewind_pop(&m)) {
@@ -262,26 +312,44 @@ int main(int argc, char **argv)
                 if (audio_dev) SDL_ClearQueuedAudio(audio_dev);
             }
         } else {
-            /* the buttons set here are what the CPU sees from vblank m.frame on, which is
-             * what an input-script line "<m.frame> <mask>" means to batman-rt and capture.lua.
-             * Nothing is pressed before vblank 1: neither harness applies input at vblank 0. */
-            const uint16_t b = m.frame ? read_buttons(pad) : 0;
-            if (rec && b != m.buttons) fprintf(rec, "%u %04x\n", m.frame, b);
-            m.buttons = b;
-            if (m.frame % REWIND_EVERY == 0) rewind_push(&m);
-            if (!spg_run_frame(&m, NULL, NULL)) {
-                fprintf(stderr, "CPU stopped at %06x\n", unsp_lpc(&m.cpu));
-                break;
+            audio_mute = ff;
+            for (int i = 0; i < (ff ? FF_FRAMES : 1) && running; i++) {
+                /* the buttons set here are what the CPU sees from vblank m.frame on, which is
+                 * what an input-script line "<m.frame> <mask>" means to batman-rt and capture.lua.
+                 * Nothing is pressed before vblank 1: neither harness applies input at vblank 0. */
+                const uint16_t b = m.frame ? read_buttons(pad) : 0;
+                if (rec && b != m.buttons) fprintf(rec, "%u %04x\n", m.frame, b);
+                m.buttons = b;
+                if (m.frame % REWIND_EVERY == 0) rewind_push(&m);
+                if (!spg_run_frame(&m, NULL, NULL)) {
+                    fprintf(stderr, "CPU stopped at %06x\n", unsp_lpc(&m.cpu));
+                    running = 0;
+                }
+                audio_flush();
+                if (m.frame % 300 == 0) save_eeprom(&m, save_path);
             }
-            audio_flush();
+            if (!running) break;
         }
 
-        SDL_UpdateTexture(tex, NULL, m.framebuffer, PPU_W * 4);
+        crt_apply(crt, filter, m.framebuffer, outbuf);
+        if (shot) {
+            char path[1100];
+            if (screenshot(base, outbuf, ow, oh, path, sizeof(path))) {
+                fprintf(stderr, "screenshot %s\n", path);
+                osd("Screenshot %.60s", strrchr(path, '/') ? strrchr(path, '/') + 1 : path);
+            } else osd("Screenshot FAILED");
+            shot = 0;
+        }
+        if (ff) osd_text(outbuf, ow, oh, ow - 16 * 6 * 3 - 24, 24, 3, ">> fast forward");
+        if (keys[SDL_SCANCODE_BACKSPACE]) osd_text(outbuf, ow, oh, ow - 16 * 6 * 3 - 24, 24, 3, "<< rewind");
+        if (osd_left > 0) {
+            osd_text(outbuf, ow, oh, 24, 24, 3, osd_msg);
+            osd_left--;
+        }
+        SDL_UpdateTexture(tex, NULL, outbuf, ow * 4);
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, NULL, NULL);
         SDL_RenderPresent(ren);
-
-        if (m.frame % 300 == 0) save_eeprom(&m, save_path);
 
         /* pace to 60 Hz; let the audio queue absorb jitter but never grow past ~4 frames */
         next += frame_ticks;
@@ -299,5 +367,7 @@ int main(int argc, char **argv)
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
+    crt_free(crt);
+    free(outbuf);
     return 0;
 }

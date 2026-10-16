@@ -5,6 +5,7 @@
  *             [--snap dir --snap-frames a,b,c]   (PNG of the frame rendered at vblank N)
  *             [--input script]   lines "<vblank> <hex mask>", same as capture.lua CAP_INPUT
  *             [--state-save-at N file] [--state-load file]
+ *             [--filter mode]    write --snap PNGs through a CRT filter (crt.h), at 4x
  *
  * --replay feeds MAME's recorded peripheral reads (tools/mame/capture.lua) back in, so the
  * CPU can be checked against MAME before the peripherals are modelled exactly. The outputs
@@ -13,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "crt.h"
 #include "png.h"
 #include "spg.h"
 #include "state.h"
@@ -23,6 +25,9 @@ static FILE *dump_out;
 static FILE *wav_out;
 static const char *snap_dir;
 static char snap_frames[4096];
+static crt_t *snap_crt;
+static int snap_filter;
+static uint32_t *snap_buf;
 static struct input_rec { uint32_t frame; uint16_t mask; } *inputs;
 static int cap_inputs;
 static int n_inputs;
@@ -82,7 +87,14 @@ static void dump_frame(spg_t *m)
     if (snap_dir && m->frame && want_snap(m->frame)) {
         char path[1024];
         snprintf(path, sizeof(path), "%s/f%05u.png", snap_dir, m->frame);
-        if (!png_write_xrgb(path, m->framebuffer, PPU_W, PPU_H)) perror(path);
+        int ok;
+        if (snap_crt) {
+            crt_apply(snap_crt, snap_filter, m->framebuffer, snap_buf);
+            ok = png_write_xrgb(path, snap_buf, crt_width(snap_crt), crt_height(snap_crt));
+        } else {
+            ok = png_write_xrgb(path, m->framebuffer, PPU_W, PPU_H);
+        }
+        if (!ok) perror(path);
     }
     if (!dump_out) return;
     uint32_t fr = m->frame;
@@ -128,6 +140,11 @@ int main(int argc, char **argv)
             state_save = argv[++i];
         }
         else if (!strcmp(argv[i], "--state-load") && i + 1 < argc) state_load = argv[++i];
+        else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
+            if ((snap_filter = crt_mode_parse(argv[++i])) < 0) { fprintf(stderr, "unknown filter %s\n", argv[i]); return 2; }
+            snap_crt = crt_new(4);
+            snap_buf = malloc(sizeof(uint32_t) * crt_width(snap_crt) * crt_height(snap_crt));
+        }
         else if (!strcmp(argv[i], "--input") && i + 1 < argc) {
             if (!load_inputs(argv[++i])) { perror(argv[i]); return 1; }
         }

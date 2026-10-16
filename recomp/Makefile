@@ -2,8 +2,8 @@
 #   build/batman-rt  headless runner for tests/check.sh (no dependencies)
 #   build/batman     SDL2 front end
 CC ?= gcc
-CFLAGS ?= -O2 -g -Wall -Wextra
-LDLIBS ?= -lm
+CFLAGS ?= -O2 -g -Wall -Wextra -pthread
+LDLIBS ?= -lm -pthread
 CORE := $(filter-out src/main.c src/sdl_main.c,$(wildcard src/*.c))
 HDR := $(wildcard src/*.h)
 OUT ?= build/batman-rt

@@ -40,6 +40,9 @@ PPU/SPU work.
 - **Save states** `recomp/src/state.c`: ~32 KB snapshots taken at vblanks. A run that saves,
   loads in a new process and runs on is byte-identical to an uninterrupted run, and its
   frames still match MAME (`tests/state.sh`, checked at vblanks 1505, 3000 and 4321).
+- **Display**: CRT filters `recomp/src/crt.c` (none, scanlines, aperture, composite, crt),
+  CPU-only and threaded, 1280x960 output. Worst case (`crt`) is 4.9 ms per frame with 8 worker
+  threads on this machine. They only read the finished frame. `osd.c` draws messages.
 - Not done: static recompiler (code is still interpreted). Only 5000 frames (~83 s) of play
   have been compared against MAME so far.
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.
@@ -66,6 +69,9 @@ Keys: arrows, Z = A (jump), X = B (attack), C = X (search/use), Enter = Menu, Es
 The save goes to `target/batman.sav` (override with `--save`).
 Save states: F5 save, F8 load, F6/F7 slot 0-9 (files `target/batman.st<N>`), hold Backspace to
 rewind (up to 60 s). States only load into the same build and ROM image (SHA-256 checked).
+Hold Tab to fast-forward (4x). F9 / Shift+F9 cycle the CRT filter (`--filter crt` at start),
+F11 toggles fullscreen, F12 saves a screenshot of the filtered image to `target/batman-NNNN.png`.
+`batman-rt --filter <mode>` applies a filter to `--snap` PNGs.
 
 `--record tests/inputs/<name>.txt` writes the session as an input script, so real play
 becomes a MAME comparison: `INPUT=tests/inputs/<name>.txt tests/check.sh <workdir> <vblanks>`
