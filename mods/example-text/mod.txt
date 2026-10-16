@@ -1,0 +1,5 @@
+# Example data mod: renames the title menu's "New Game" (same length, 16-bit characters).
+# The string is at word 0x403C; the upper ROM half has its own copy at 0x10403C.
+name example-text
+rom  4ec5438d16e222cc624820f45579071b8f8a4e91c65ae76e5425565509271766
+text 0x403c "Bat Game"

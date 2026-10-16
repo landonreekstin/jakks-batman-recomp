@@ -23,7 +23,7 @@ typedef struct io_rec {
 typedef struct spg {
     unsp_t cpu;
 
-    const uint16_t *rom;   /* 0x200000 words, mapped at 0 and mirrored at 0x200000 */
+    const uint16_t *rom;   /* ROM_SPACE_WORDS (rom.h): the file at 0 and its copy at 0x200000 */
     uint16_t ram[0x2800];
     uint16_t vregs[0x100];  /* 0x2800 PPU */
     uint16_t vram[0x700];   /* 0x2900 scroll, 0x2a00 hcomp, 0x2b00 palette, 0x2c00 sprites */
@@ -56,12 +56,18 @@ typedef struct spg {
 
     FILE *iolog;             /* our own accesses, same format as capture.lua (frame labels start at 1) */
     void (*on_frame)(struct spg *m);
+
+    /* PC hooks for mods (mod.c): one bit per word address; pc_hook returns 1 if it moved PC */
+    const uint8_t *hook_map;
+    int (*pc_hook)(struct spg *m, uint32_t pc);
 } spg_t;
 
 int spg_init(spg_t *m, const uint16_t *rom);
 void spg_reset(spg_t *m);
 /* Runs until the next vblank begins (frame boundary as MAME sees it). Returns 0 on CPU error. */
 int spg_run_frame(spg_t *m, FILE *trace, uint64_t *trace_budget);
+/* side-effect-free read of RAM, video RAM and ROM (I/O registers read as ROM) */
+uint16_t spg_peek(spg_t *m, uint32_t addr);
 /* draws the current video state into framebuffer (spg_run_frame does this at each vblank when render is set) */
 void spg_render(spg_t *m);
 int spg_load_replay(spg_t *m, const char *path);

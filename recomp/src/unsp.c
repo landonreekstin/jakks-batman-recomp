@@ -422,6 +422,8 @@ static void exec_remaining(unsp_t *c, uint16_t op)
     }
 }
 
+void unsp_check_irqs(unsp_t *c) { check_irqs(c); }
+
 uint16_t unsp_step(unsp_t *c)
 {
     const uint16_t op = fetch(c);

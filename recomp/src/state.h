@@ -41,7 +41,7 @@ void spg_snapshot(const spg_t *m, spg_snap_t *s);
 /* restores the machine state and re-renders the framebuffer if m->render is set */
 void spg_restore(spg_t *m, const spg_snap_t *s);
 
-/* SHA-256 of the ROM image as the machine sees it (0x200000 little-endian words) */
+/* SHA-256 of the ROM space as the machine sees it (ROM_SPACE_WORDS little-endian words) */
 void spg_rom_hash(const uint16_t *rom, uint8_t out[32]);
 
 /* return 0 and print the reason on failure */

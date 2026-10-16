@@ -1,7 +1,7 @@
 /* SDL2 front end: play The Batman natively.
  *
  *   batman <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N]
- *                       [--record script.txt]
+ *                       [--record script.txt] [--mods a,b] [--mods-dir dir]
  *
  * Keys: arrows = joypad, Z = A (jump), X = B (attack), C = X (search/use),
  *       Enter = Menu, Esc = quit. Game controllers are mapped the same way
@@ -14,7 +14,9 @@
  *
  * --record writes the controller state as an input script (tests/inputs format), so
  * the session can be replayed in MAME and batman-rt by tests/check.sh. A recording
- * starts from a blank EEPROM, like the MAME capture, and saves to <script>.sav. */
+ * starts from a blank EEPROM, like the MAME capture, and saves to <script>.sav.
+ *
+ * Mods (mod.h) come from --mods, or else from <mods-dir>/enabled.txt (default dir "mods"). */
 #include <SDL.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -24,11 +26,12 @@
 
 #include "crt.h"
 #include "osd.h"
+#include "mod.h"
 #include "png.h"
+#include "rom.h"
 #include "spg.h"
 #include "state.h"
 
-#define ROM_WORDS 0x200000
 #define OUT_SCALE 4   /* filter output is 1280x960; SDL scales that to the window */
 #define FF_FRAMES 4   /* emulated frames per displayed frame while fast-forwarding */
 #define OSD_FRAMES 120
@@ -105,20 +108,6 @@ static void stop_recording(FILE **rec, const char *path, uint32_t frame)
     fprintf(stderr, "recorded %u vblanks to %s\n", frame, path);
 }
 
-static uint16_t *load_rom(const char *path)
-{
-    FILE *f = fopen(path, "rb");
-    if (!f) { perror(path); return NULL; }
-    uint8_t *raw = malloc(ROM_WORDS * 2);
-    size_t n = fread(raw, 1, ROM_WORDS * 2, f);
-    fclose(f);
-    if (n != ROM_WORDS * 2) { fprintf(stderr, "%s: expected %d bytes, got %zu\n", path, ROM_WORDS * 2, n); return NULL; }
-    uint16_t *rom = malloc(ROM_WORDS * 2);
-    for (size_t i = 0; i < ROM_WORDS; i++) rom[i] = (uint16_t)(raw[2 * i] | raw[2 * i + 1] << 8);
-    free(raw);
-    return rom;
-}
-
 static void save_eeprom(spg_t *m, const char *path)
 {
     if (!m->eeprom.dirty) return;
@@ -173,12 +162,14 @@ int main(int argc, char **argv)
     char save_path[1024] = "";
     int scale = 3, filter = CRT_NONE;
     long max_frames = -1;
-    const char *record_path = NULL;
+    const char *record_path = NULL, *mod_list = NULL, *mods_dir = "mods";
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--save") && i + 1 < argc) snprintf(save_path, sizeof(save_path), "%s", argv[++i]);
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) max_frames = atol(argv[++i]);
         else if (!strcmp(argv[i], "--record") && i + 1 < argc) record_path = argv[++i];
+        else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
+        else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             if ((filter = crt_mode_parse(argv[++i])) < 0) {
                 fprintf(stderr, "unknown filter %s (none, scanlines, aperture, composite, crt)\n", argv[i]);
@@ -189,7 +180,7 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir]\n", argv[0]);
         return 2;
     }
     FILE *rec = NULL;
@@ -212,19 +203,26 @@ int main(int argc, char **argv)
         if (n > 4 && !strcmp(base + n - 4, ".sav")) base[n - 4] = 0;
     }
 
-    uint16_t *rom = load_rom(rom_path);
+    uint8_t file_sha[32];
+    uint16_t *rom = rom_load(rom_path, file_sha);
     if (!rom) return 1;
+    char enabled[4096];
+    if (!mod_list && mods_enabled_list(mods_dir, enabled, sizeof(enabled))) mod_list = enabled;
+    if (mod_list && !mods_load(mod_list, mods_dir, rom, file_sha)) return 1;
+    if (rec && mods_count()) fprintf(stderr, "warning: recording with mods; MAME will not reproduce it\n");
     static spg_t m;
     spg_init(&m, rom);
+    mods_attach(&m);
     FILE *sf = rec ? NULL : fopen(save_path, "rb");
     if (sf) {
         if (fread(m.eeprom.data, 1, EEPROM_SIZE, sf) != EEPROM_SIZE) fprintf(stderr, "%s: short save file\n", save_path);
         fclose(sf);
     }
     uint8_t rom_hash[32];
-    spg_rom_hash(rom, rom_hash);
+    mods_content_id(rom, rom_hash);
     int slot = 0;
     spg_reset(&m);
+    mods_reset(&m);
     m.render = 1;
     m.spu.out = audio_sample;
 
@@ -325,6 +323,7 @@ int main(int argc, char **argv)
                     fprintf(stderr, "CPU stopped at %06x\n", unsp_lpc(&m.cpu));
                     running = 0;
                 }
+                mods_frame(&m);
                 audio_flush();
                 if (m.frame % 300 == 0) save_eeprom(&m, save_path);
             }

@@ -43,6 +43,12 @@ PPU/SPU work.
 - **Display**: CRT filters `recomp/src/crt.c` (none, scanlines, aperture, composite, crt),
   CPU-only and threaded, 1280x960 output. Worst case (`crt`) is 4.9 ms per frame with 8 worker
   threads on this machine. They only read the finished frame. `osd.c` draws messages.
+- **Mods** `recomp/src/mod.c` (format in `mods/README.md`, plugin API in `mod_api.h`): ROM text,
+  word and file patches, RAM pokes, and native plugins with PC hooks. The ROM space is the full
+  4 M words, with the upper half a separate copy (it was a mirror). Checks:
+  - `example-text`, baked into a ROM, matches MAME;
+  - `tests/mods/retf-identity` replaces 4944 RETFs through a hook and still matches MAME;
+  - unmodded runs are unchanged.
 - Not done: static recompiler (code is still interpreted). Only 5000 frames (~83 s) of play
   have been compared against MAME so far.
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.
@@ -79,6 +85,13 @@ becomes a MAME comparison: `INPUT=tests/inputs/<name>.txt tests/check.sh <workdi
 like the MAME capture, and save to `<name>.txt.sav`. Loading a state or rewinding ends the
 recording, since the script would no longer describe one uninterrupted run. Both captures write ~15 KB per vblank
 (RAM + video RAM), so a 10-minute session is about 0.5 GB per side.
+
+## Modding
+
+See `mods/README.md`. Run `batman`/`batman-rt` with `--mods a,b`; the SDL build also reads
+`mods/enabled.txt`. `MODS=a,b tests/check.sh` compares a data mod with MAME, which runs the ROM
+file baked with `batman-rt --bake`. Content RE for new levels is the next step: see the plan
+(ROM usage map, graphics, RAM map, level format).
 
 ## Tools / quirks
 

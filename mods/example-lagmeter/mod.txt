@@ -1,0 +1,5 @@
+# Example native mod: counts lag frames (vblanks in which the game never reached its
+# frame wait) and shows the count in the top-right corner. Build: make -C recomp
+name example-lagmeter
+rom    4ec5438d16e222cc624820f45579071b8f8a4e91c65ae76e5425565509271766
+plugin plugin.so

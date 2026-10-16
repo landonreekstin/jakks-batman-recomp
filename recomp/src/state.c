@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "rom.h"
 #include "sha256.h"
 
 #define STATE_MAGIC "BATSTATE"
@@ -87,7 +88,7 @@ void spg_rom_hash(const uint16_t *rom, uint8_t out[32])
     sha256_t s;
     sha256_init(&s);
     uint8_t buf[4096];
-    for (size_t i = 0; i < 0x200000; i += sizeof(buf) / 2) {
+    for (size_t i = 0; i < ROM_SPACE_WORDS; i += sizeof(buf) / 2) {
         for (size_t j = 0; j < sizeof(buf) / 2; j++) {
             buf[2 * j] = (uint8_t)rom[i + j];
             buf[2 * j + 1] = (uint8_t)(rom[i + j] >> 8);

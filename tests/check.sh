@@ -5,6 +5,8 @@
 # The MAME capture is cached in <workdir>/mame; delete it to recapture.
 # Env: INPUT=<script> (tests/inputs/*.txt), SNAPS=<a,b,c> vblanks to compare as images,
 #      REPLAY=1 feed MAME's peripheral reads back in.
+#      MODS=a,b  run batman-rt with those mods and MAME on the ROM file with them baked in
+#      (data mods only: plugins and pokes have no MAME equivalent).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -14,6 +16,11 @@ trace=${3:-}
 rom=$here/target/batman.bin
 
 mkdir -p "$work/roms/jak_batm" "$work/mame/nvram" "$work/ours"
+make -s -C "$here/recomp" OUT=build/batman-rt
+if [ -n "${MODS:-}" ]; then
+    "$here/recomp/build/batman-rt" "$rom" --mods "$MODS" --mods-dir "$here/mods" --bake "$work/baked.bin" --frames 0
+    rom=$work/baked.bin
+fi
 ln -sf "$rom" "$work/roms/jak_batm/batman.bin"
 
 if [ ! -f "$work/mame/frames.bin" ]; then
@@ -28,13 +35,13 @@ if [ ! -f "$work/mame/frames.bin" ]; then
         -autoboot_script "$here/tools/mame/capture.lua" >/dev/null
 fi
 
-make -s -C "$here/recomp" OUT=build/batman-rt
 args=(--frames "$frames" --iolog "$work/ours/io.log" --dump "$work/ours/frames.bin")
 [ -n "${REPLAY:-}" ] && args+=(--replay "$work/mame/io.log")
+[ -n "${MODS:-}" ] && args+=(--mods "$MODS" --mods-dir "$here/mods")
 [ -n "$trace" ] && args+=(--trace "$work/ours/trace.tr")
 [ -n "${INPUT:-}" ] && args+=(--input "$INPUT")
 [ -n "${SNAPS:-}" ] && args+=(--snap "$work/ours" --snap-frames "$SNAPS")
-"$here/recomp/build/batman-rt" "$rom" "${args[@]}" || true
+"$here/recomp/build/batman-rt" "$here/target/batman.bin" "${args[@]}" || true
 
 rc=0
 [ -n "$trace" ] && { python3 "$here/tests/compare.py" trace "$work/mame/trace.tr" "$work/ours/trace.tr" || rc=1; }

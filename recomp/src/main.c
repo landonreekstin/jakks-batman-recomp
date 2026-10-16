@@ -6,6 +6,8 @@
  *             [--input script]   lines "<vblank> <hex mask>", same as capture.lua CAP_INPUT
  *             [--state-save-at N file] [--state-load file]
  *             [--filter mode]    write --snap PNGs through a CRT filter (crt.h), at 4x
+ *             [--mods a,b [--mods-dir dir]]   runtime mods (mod.h); default dir "mods"
+ *             [--bake out.bin]   write the ROM file with the mods' patches applied, for MAME
  *
  * --replay feeds MAME's recorded peripheral reads (tools/mame/capture.lua) back in, so the
  * CPU can be checked against MAME before the peripherals are modelled exactly. The outputs
@@ -15,11 +17,11 @@
 #include <string.h>
 
 #include "crt.h"
+#include "mod.h"
 #include "png.h"
+#include "rom.h"
 #include "spg.h"
 #include "state.h"
-
-#define ROM_WORDS 0x200000
 
 static FILE *dump_out;
 static FILE *wav_out;
@@ -77,13 +79,9 @@ static int want_snap(uint32_t frame)
     return strstr(snap_frames, key) != NULL;
 }
 
-static void dump_frame(spg_t *m)
+/* after mods_frame, so that what mods draw is in the picture */
+static void snap_frame(spg_t *m)
 {
-    static int next_input; /* scripts are in vblank order */
-    while (next_input < n_inputs && inputs[next_input].frame <= m->frame) {
-        if (inputs[next_input].frame == m->frame) m->buttons = inputs[next_input].mask;
-        next_input++;
-    }
     if (snap_dir && m->frame && want_snap(m->frame)) {
         char path[1024];
         snprintf(path, sizeof(path), "%s/f%05u.png", snap_dir, m->frame);
@@ -96,6 +94,15 @@ static void dump_frame(spg_t *m)
         }
         if (!ok) perror(path);
     }
+}
+
+static void dump_frame(spg_t *m)
+{
+    static int next_input; /* scripts are in vblank order */
+    while (next_input < n_inputs && inputs[next_input].frame <= m->frame) {
+        if (inputs[next_input].frame == m->frame) m->buttons = inputs[next_input].mask;
+        next_input++;
+    }
     if (!dump_out) return;
     uint32_t fr = m->frame;
     uint64_t cyc = (uint64_t)m->cpu.cycles;
@@ -105,18 +112,18 @@ static void dump_frame(spg_t *m)
     fwrite(m->vram, 2, 0x700, dump_out);
 }
 
-static uint16_t *load_rom(const char *path)
+/* the patched ROM as a file MAME can run; MAME mirrors the file, so a patched upper half is lost */
+static int bake_rom(const uint16_t *rom, const char *path)
 {
-    FILE *f = fopen(path, "rb");
-    if (!f) { perror(path); return NULL; }
-    uint16_t *rom = calloc(ROM_WORDS, 2);
-    uint8_t *raw = malloc(ROM_WORDS * 2);
-    size_t n = fread(raw, 1, ROM_WORDS * 2, f);
-    fclose(f);
-    if (n != ROM_WORDS * 2) { fprintf(stderr, "%s: expected %d bytes, got %zu\n", path, ROM_WORDS * 2, n); return NULL; }
-    for (size_t i = 0; i < ROM_WORDS; i++) rom[i] = (uint16_t)(raw[2 * i] | raw[2 * i + 1] << 8);
-    free(raw);
-    return rom;
+    if (memcmp(rom, rom + ROM_FILE_WORDS, ROM_FILE_WORDS * 2))
+        fprintf(stderr, "bake: the upper ROM half is patched; MAME maps the file there again, so it won't see that\n");
+    FILE *f = fopen(path, "wb");
+    if (!f) { perror(path); return 0; }
+    for (size_t i = 0; i < ROM_FILE_WORDS; i++) {
+        fputc(rom[i] & 0xff, f);
+        fputc(rom[i] >> 8, f);
+    }
+    return !fclose(f);
 }
 
 int main(int argc, char **argv)
@@ -124,7 +131,7 @@ int main(int argc, char **argv)
     const char *rom_path = NULL, *replay = NULL, *iolog = NULL, *dump = NULL, *trace_path = NULL;
     unsigned frames = 600;
     uint64_t trace_instr = 0;
-    const char *state_save = NULL, *state_load = NULL;
+    const char *state_save = NULL, *state_load = NULL, *mod_list = NULL, *mods_dir = "mods", *bake = NULL;
     unsigned state_save_at = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -140,6 +147,9 @@ int main(int argc, char **argv)
             state_save = argv[++i];
         }
         else if (!strcmp(argv[i], "--state-load") && i + 1 < argc) state_load = argv[++i];
+        else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
+        else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
+        else if (!strcmp(argv[i], "--bake") && i + 1 < argc) bake = argv[++i];
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             if ((snap_filter = crt_mode_parse(argv[++i])) < 0) { fprintf(stderr, "unknown filter %s\n", argv[i]); return 2; }
             snap_crt = crt_new(4);
@@ -161,11 +171,15 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    uint16_t *rom = load_rom(rom_path);
+    uint8_t file_sha[32];
+    uint16_t *rom = rom_load(rom_path, file_sha);
     if (!rom) return 1;
+    if (mod_list && !mods_load(mod_list, mods_dir, rom, file_sha)) return 1;
+    if (bake && !bake_rom(rom, bake)) return 1;
 
     static spg_t m;
     spg_init(&m, rom);
+    mods_attach(&m);
     if (replay && !spg_load_replay(&m, replay)) { perror(replay); return 1; }
     if (iolog && !(m.iolog = fopen(iolog, "w"))) { perror(iolog); return 1; }
     if (dump && !(dump_out = fopen(dump, "wb"))) { perror(dump); return 1; }
@@ -177,8 +191,9 @@ int main(int argc, char **argv)
     m.render = snap_dir != NULL || getenv("BATMAN_RENDER") != NULL;
 
     uint8_t rom_hash[32];
-    spg_rom_hash(rom, rom_hash);
+    mods_content_id(rom, rom_hash);
     spg_reset(&m);
+    mods_reset(&m);
     if (state_load) {
         if (!spg_state_load(&m, rom_hash, state_load)) return 1;
     } else {
@@ -189,6 +204,8 @@ int main(int argc, char **argv)
     while (m.frame < frames) {
         if (state_save && m.frame == state_save_at && !spg_state_save(&m, rom_hash, state_save)) return 1;
         if (!spg_run_frame(&m, trace, &trace_instr)) { ok = 0; break; }
+        mods_frame(&m);
+        snap_frame(&m);
     }
     if (state_save && m.frame == state_save_at && !spg_state_save(&m, rom_hash, state_save)) return 1;
 

@@ -1,0 +1,7 @@
+# Test mod: replaces the RETF instruction at the end of wait_vblank (0x005CE3) with a
+# C hook that does the same thing through api->retf. The run must stay identical to MAME
+# (tests/check.sh with MODS=$PWD/tests/mods/retf-identity), which checks the hook path:
+# dispatch, retf, cycle cost and the interrupt check after a replacing hook.
+name retf-identity
+rom    4ec5438d16e222cc624820f45579071b8f8a4e91c65ae76e5425565509271766
+plugin plugin.so

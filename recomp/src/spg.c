@@ -58,7 +58,7 @@ static int vpos(const spg_t *m)
     return (int)((VIS_H + (uint64_t)(delta / SCAN_AS)) % SCREEN_H);
 }
 
-static uint16_t rom_read(const spg_t *m, uint32_t addr) { return m->rom[addr & 0x1fffff]; }
+static uint16_t rom_read(const spg_t *m, uint32_t addr) { return m->rom[addr & 0x3fffff]; }
 
 /* ---- SPU ---------------------------------------------------------------------------- */
 
@@ -326,6 +326,14 @@ void spg_trace_line(spg_t *m, FILE *f)
             r[REG_R1], r[REG_R2], r[REG_R3], r[REG_R4], r[REG_BP], r[REG_SP], r[REG_SR], unsp_lpc(&m->cpu));
 }
 
+uint16_t spg_peek(spg_t *m, uint32_t addr)
+{
+    const uint32_t a = addr & 0x3fffff;
+    if (a < 0x2800) return m->ram[a];
+    if (a >= 0x2900 && a < 0x3000) return m->vram[a - 0x2900];
+    return rom_read(m, a);
+}
+
 void spg_render(spg_t *m)
 {
     const ppu_mem_t mem = { m->vregs, m->vram, m->vram + 0x200, m->vram + 0x300, m, space_read };
@@ -363,6 +371,13 @@ int spg_run_frame(spg_t *m, FILE *trace, uint64_t *trace_budget)
                 video_check_irq(m);
             }
             return 1;
+        }
+        if (m->hook_map) {
+            const uint32_t pc = unsp_lpc(&m->cpu);
+            if ((m->hook_map[pc >> 3] >> (pc & 7) & 1) && m->pc_hook(m, pc)) {
+                unsp_check_irqs(&m->cpu); /* the hook stood in for an instruction */
+                continue;
+            }
         }
         if (trace && *trace_budget) {
             spg_trace_line(m, trace);

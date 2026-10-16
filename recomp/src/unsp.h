@@ -40,6 +40,9 @@ void unsp_set_line(unsp_t *c, int line, int state);
 /* Executes one instruction, then services pending interrupts like MAME's execute_run.
  * Returns the opcode word executed. */
 uint16_t unsp_step(unsp_t *c);
+/* Services pending interrupts as unsp_step does after an instruction (for code that
+ * stands in for an instruction, such as a mod hook that replaced one). */
+void unsp_check_irqs(unsp_t *c);
 /* Sets non-zero when an opcode MAME treats as unimplemented on ISA 1.0 was hit. */
 extern int unsp_bad_opcode;
 

@@ -6,3 +6,5 @@ recomp/build/
 *.o
 *.obj
 .direnv/
+mods/*/*.so
+tests/mods/*/*.so
