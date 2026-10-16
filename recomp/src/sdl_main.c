@@ -5,6 +5,8 @@
  * Keys: arrows = joypad, Z = A (jump), X = B (attack), C = X (search/use),
  *       Enter = Menu, Esc = quit. Game controllers are mapped the same way
  *       (south = A, west = B, north = X, start = Menu).
+ *       F5 = save state, F8 = load state, F6/F7 = previous/next slot (0-9),
+ *       Backspace (hold) = rewind. States go to <save file minus .sav>.st<slot>.
  * The 24C04 save EEPROM is kept in --save (default batman.sav next to the ROM).
  *
  * --record writes the controller state as an input script (tests/inputs format), so
@@ -16,6 +18,7 @@
 #include <string.h>
 
 #include "spg.h"
+#include "state.h"
 
 #define ROM_WORDS 0x200000
 
@@ -43,6 +46,46 @@ static void audio_flush(void)
 {
     if (audio_dev && audio_len) SDL_QueueAudio(audio_dev, audio_buf, (Uint32)(audio_len * 4));
     audio_len = 0;
+}
+
+/* rewind: a snapshot every REWIND_EVERY frames, REWIND_SLOTS deep (~32 KB each) */
+#define REWIND_EVERY 4
+#define REWIND_SLOTS 900 /* 60 s */
+static spg_snap_t *rewind_buf;
+static int rewind_head, rewind_len;
+
+static void rewind_push(const spg_t *m)
+{
+    if (!rewind_buf) rewind_buf = malloc(sizeof(spg_snap_t) * REWIND_SLOTS);
+    if (!rewind_buf) return;
+    spg_snapshot(m, &rewind_buf[rewind_head]);
+    rewind_head = (rewind_head + 1) % REWIND_SLOTS;
+    if (rewind_len < REWIND_SLOTS) rewind_len++;
+}
+
+static int rewind_pop(spg_t *m)
+{
+    if (!rewind_len) return 0;
+    rewind_head = (rewind_head + REWIND_SLOTS - 1) % REWIND_SLOTS;
+    rewind_len--;
+    spg_restore(m, &rewind_buf[rewind_head]);
+    return 1;
+}
+
+/* a recording only replays if the run was uninterrupted, so it ends at a state load or rewind */
+static void stop_recording(FILE **rec, const char *path, uint32_t frame)
+{
+    fprintf(*rec, "# end at vblank %u: tests/check.sh <workdir> %u with INPUT=%s\n", frame, frame, path);
+    fclose(*rec);
+    *rec = NULL;
+    fprintf(stderr, "recorded %u vblanks to %s\n", frame, path);
+}
+
+static void set_title(SDL_Window *win, int slot, const char *msg)
+{
+    char t[256];
+    snprintf(t, sizeof(t), "The Batman  [slot %d]%s%s", slot, msg ? "  " : "", msg ? msg : "");
+    SDL_SetWindowTitle(win, t);
 }
 
 static uint16_t *load_rom(const char *path)
@@ -138,6 +181,15 @@ int main(int argc, char **argv)
         if (fread(m.eeprom.data, 1, EEPROM_SIZE, sf) != EEPROM_SIZE) fprintf(stderr, "%s: short save file\n", save_path);
         fclose(sf);
     }
+    uint8_t rom_hash[32];
+    spg_rom_hash(rom, rom_hash);
+    char state_base[1024];
+    snprintf(state_base, sizeof(state_base), "%s", save_path);
+    {
+        const size_t n = strlen(state_base);
+        if (n > 4 && !strcmp(state_base + n - 4, ".sav")) state_base[n - 4] = 0;
+    }
+    int slot = 0;
     spg_reset(&m);
     m.render = 1;
     m.spu.out = audio_sample;
@@ -162,6 +214,7 @@ int main(int argc, char **argv)
     if (!audio_dev) fprintf(stderr, "no audio: %s\n", SDL_GetError());
     else SDL_PauseAudioDevice(audio_dev, 0);
 
+    set_title(win, slot, NULL);
     SDL_GameController *pad = NULL;
     for (int i = 0; i < SDL_NumJoysticks() && !pad; i++)
         if (SDL_IsGameController(i)) pad = SDL_GameControllerOpen(i);
@@ -175,19 +228,53 @@ int main(int argc, char **argv)
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
             else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = 0;
+            else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
+                char path[1100], msg[64];
+                snprintf(path, sizeof(path), "%s.st%d", state_base, slot);
+                switch (e.key.keysym.sym) {
+                case SDLK_F5:
+                    snprintf(msg, sizeof(msg), spg_state_save(&m, rom_hash, path) ? "saved" : "save FAILED");
+                    set_title(win, slot, msg);
+                    break;
+                case SDLK_F8: {
+                    const uint32_t was = m.frame;
+                    if (spg_state_load(&m, rom_hash, path)) {
+                        snprintf(msg, sizeof(msg), "loaded (vblank %u)", m.frame);
+                        if (rec) stop_recording(&rec, record_path, was);
+                        if (audio_dev) SDL_ClearQueuedAudio(audio_dev);
+                        next = (double)SDL_GetPerformanceCounter();
+                    } else snprintf(msg, sizeof(msg), "no state in slot");
+                    set_title(win, slot, msg);
+                    break;
+                }
+                case SDLK_F6: slot = (slot + 9) % 10; set_title(win, slot, NULL); break;
+                case SDLK_F7: slot = (slot + 1) % 10; set_title(win, slot, NULL); break;
+                default: break;
+                }
+            }
             else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
         }
-        /* the buttons set here are what the CPU sees from vblank m.frame on, which is
-         * what an input-script line "<m.frame> <mask>" means to batman-rt and capture.lua.
-         * Nothing is pressed before vblank 1: neither harness applies input at vblank 0. */
-        const uint16_t b = m.frame ? read_buttons(pad) : 0;
-        if (rec && b != m.buttons) fprintf(rec, "%u %04x\n", m.frame, b);
-        m.buttons = b;
-        if (!spg_run_frame(&m, NULL, NULL)) {
-            fprintf(stderr, "CPU stopped at %06x\n", unsp_lpc(&m.cpu));
-            break;
+        if (SDL_GetKeyboardState(NULL)[SDL_SCANCODE_BACKSPACE]) {
+            /* rewind: step back one snapshot per displayed frame (REWIND_EVERY x speed), silently */
+            const uint32_t was = m.frame;
+            if (rewind_pop(&m)) {
+                if (rec) stop_recording(&rec, record_path, was);
+                if (audio_dev) SDL_ClearQueuedAudio(audio_dev);
+            }
+        } else {
+            /* the buttons set here are what the CPU sees from vblank m.frame on, which is
+             * what an input-script line "<m.frame> <mask>" means to batman-rt and capture.lua.
+             * Nothing is pressed before vblank 1: neither harness applies input at vblank 0. */
+            const uint16_t b = m.frame ? read_buttons(pad) : 0;
+            if (rec && b != m.buttons) fprintf(rec, "%u %04x\n", m.frame, b);
+            m.buttons = b;
+            if (m.frame % REWIND_EVERY == 0) rewind_push(&m);
+            if (!spg_run_frame(&m, NULL, NULL)) {
+                fprintf(stderr, "CPU stopped at %06x\n", unsp_lpc(&m.cpu));
+                break;
+            }
+            audio_flush();
         }
-        audio_flush();
 
         SDL_UpdateTexture(tex, NULL, m.framebuffer, PPU_W * 4);
         SDL_RenderClear(ren);
@@ -205,11 +292,7 @@ int main(int argc, char **argv)
     }
 
     save_eeprom(&m, save_path);
-    if (rec) {
-        fprintf(rec, "# end at vblank %u: tests/check.sh <workdir> %u with INPUT=%s\n", m.frame, m.frame, record_path);
-        fclose(rec);
-        fprintf(stderr, "recorded %u vblanks to %s\n", m.frame, record_path);
-    }
+    if (rec) stop_recording(&rec, record_path, m.frame);
     if (pad) SDL_GameControllerClose(pad);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
     SDL_DestroyTexture(tex);

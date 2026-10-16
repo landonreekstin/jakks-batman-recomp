@@ -37,6 +37,9 @@ PPU/SPU work.
 - **Playable**: `recomp/build/batman` (SDL2) runs the game natively at 60 Hz with sound,
   keyboard/gamepad and a persistent save file. The core runs about 16x faster than real time
   (5000 frames with rendering in 5.1 s).
+- **Save states** `recomp/src/state.c`: ~32 KB snapshots taken at vblanks. A run that saves,
+  loads in a new process and runs on is byte-identical to an uninterrupted run, and its
+  frames still match MAME (`tests/state.sh`, checked at vblanks 1505, 3000 and 4321).
 - Not done: static recompiler (code is still interpreted). Only 5000 frames (~83 s) of play
   have been compared against MAME so far.
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.
@@ -51,6 +54,8 @@ PPU/SPU work.
   --snap-frames a,b] [--wav out.wav] [--dump f] [--iolog f] [--trace f]`.
   `tools/contact_sheet.py` tiles snapshots into one PNG for a quick look. Keep `--trace` to ~20 frames
   (about 93k instructions per frame).
+- `tests/state.sh <workdir> [save-at] [frames]` (env `INPUT`): save-state round trip, also
+  compared with MAME when `<workdir>/mame` holds a capture with the same input.
 - `tools/mame/capture.lua` makes the MAME reference. `tests/compare.py` does the diffs.
 - `tools/ghidra/SeedAndExport.java`: headless Ghidra pass, exports the function list.
 
@@ -59,11 +64,14 @@ PPU/SPU work.
 `make -C recomp`, then `env -u LD_LIBRARY_PATH recomp/build/batman target/batman.bin`.
 Keys: arrows, Z = A (jump), X = B (attack), C = X (search/use), Enter = Menu, Esc = quit.
 The save goes to `target/batman.sav` (override with `--save`).
+Save states: F5 save, F8 load, F6/F7 slot 0-9 (files `target/batman.st<N>`), hold Backspace to
+rewind (up to 60 s). States only load into the same build and ROM image (SHA-256 checked).
 
 `--record tests/inputs/<name>.txt` writes the session as an input script, so real play
 becomes a MAME comparison: `INPUT=tests/inputs/<name>.txt tests/check.sh <workdir> <vblanks>`
 (the last line of the script gives the vblank count). Recordings start from a blank EEPROM,
-like the MAME capture, and save to `<name>.txt.sav`. Both captures write ~15 KB per vblank
+like the MAME capture, and save to `<name>.txt.sav`. Loading a state or rewinding ends the
+recording, since the script would no longer describe one uninterrupted run. Both captures write ~15 KB per vblank
 (RAM + video RAM), so a 10-minute session is about 0.5 GB per side.
 
 ## Tools / quirks

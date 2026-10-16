@@ -4,6 +4,7 @@
  *             [--dump frames.bin] [--trace out.tr --trace-instr N] [--wav out.wav]
  *             [--snap dir --snap-frames a,b,c]   (PNG of the frame rendered at vblank N)
  *             [--input script]   lines "<vblank> <hex mask>", same as capture.lua CAP_INPUT
+ *             [--state-save-at N file] [--state-load file]
  *
  * --replay feeds MAME's recorded peripheral reads (tools/mame/capture.lua) back in, so the
  * CPU can be checked against MAME before the peripherals are modelled exactly. The outputs
@@ -14,6 +15,7 @@
 
 #include "png.h"
 #include "spg.h"
+#include "state.h"
 
 #define ROM_WORDS 0x200000
 
@@ -110,6 +112,8 @@ int main(int argc, char **argv)
     const char *rom_path = NULL, *replay = NULL, *iolog = NULL, *dump = NULL, *trace_path = NULL;
     unsigned frames = 600;
     uint64_t trace_instr = 0;
+    const char *state_save = NULL, *state_load = NULL;
+    unsigned state_save_at = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = (unsigned)atoi(argv[++i]);
@@ -119,6 +123,11 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) trace_path = argv[++i];
         else if (!strcmp(argv[i], "--trace-instr") && i + 1 < argc) trace_instr = strtoull(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--snap") && i + 1 < argc) snap_dir = argv[++i];
+        else if (!strcmp(argv[i], "--state-save-at") && i + 2 < argc) {
+            state_save_at = (unsigned)atoi(argv[++i]);
+            state_save = argv[++i];
+        }
+        else if (!strcmp(argv[i], "--state-load") && i + 1 < argc) state_load = argv[++i];
         else if (!strcmp(argv[i], "--input") && i + 1 < argc) {
             if (!load_inputs(argv[++i])) { perror(argv[i]); return 1; }
         }
@@ -150,13 +159,21 @@ int main(int argc, char **argv)
     if (wav_out) m.spu.out = wav_sample;
     m.render = snap_dir != NULL || getenv("BATMAN_RENDER") != NULL;
 
+    uint8_t rom_hash[32];
+    spg_rom_hash(rom, rom_hash);
     spg_reset(&m);
-    dump_frame(&m); /* frame 0: MAME's initial frame_update, before the CPU runs */
+    if (state_load) {
+        if (!spg_state_load(&m, rom_hash, state_load)) return 1;
+    } else {
+        dump_frame(&m); /* frame 0: MAME's initial frame_update, before the CPU runs */
+    }
 
     int ok = 1;
     while (m.frame < frames) {
+        if (state_save && m.frame == state_save_at && !spg_state_save(&m, rom_hash, state_save)) return 1;
         if (!spg_run_frame(&m, trace, &trace_instr)) { ok = 0; break; }
     }
+    if (state_save && m.frame == state_save_at && !spg_state_save(&m, rom_hash, state_save)) return 1;
 
     if (m.replay) {
         fprintf(stderr, "replay: %zu/%zu reads consumed%s\n", m.replay_pos, m.replay_len,

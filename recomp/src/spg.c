@@ -326,6 +326,12 @@ void spg_trace_line(spg_t *m, FILE *f)
             r[REG_R1], r[REG_R2], r[REG_R3], r[REG_R4], r[REG_BP], r[REG_SP], r[REG_SR], unsp_lpc(&m->cpu));
 }
 
+void spg_render(spg_t *m)
+{
+    const ppu_mem_t mem = { m->vregs, m->vram, m->vram + 0x200, m->vram + 0x300, m, space_read };
+    ppu_render(&m->ppu, &mem, m->framebuffer);
+}
+
 int spg_run_frame(spg_t *m, FILE *trace, uint64_t *trace_budget)
 {
     for (;;) {
@@ -350,10 +356,7 @@ int spg_run_frame(spg_t *m, FILE *trace, uint64_t *trace_budget)
             m->frame++;
             m->vblank_start_as = (u128)m->frame * FRAME_AS;
             m->next_vbl_begin = event_threshold((u128)(m->frame + 1) * FRAME_AS);
-            if (m->render) {
-                const ppu_mem_t mem = { m->vregs, m->vram, m->vram + 0x200, m->vram + 0x300, m, space_read };
-                ppu_render(&m->ppu, &mem, m->framebuffer);
-            }
+            if (m->render) spg_render(m);
             if (m->on_frame) m->on_frame(m); /* MAME's frame_update runs before the vblank callbacks */
             if (m->vregs[V_IRQ_ENABLE] & 1) {
                 m->vregs[V_IRQ_STATUS] |= 1;

@@ -62,6 +62,8 @@ int spg_init(spg_t *m, const uint16_t *rom);
 void spg_reset(spg_t *m);
 /* Runs until the next vblank begins (frame boundary as MAME sees it). Returns 0 on CPU error. */
 int spg_run_frame(spg_t *m, FILE *trace, uint64_t *trace_budget);
+/* draws the current video state into framebuffer (spg_run_frame does this at each vblank when render is set) */
+void spg_render(spg_t *m);
 int spg_load_replay(spg_t *m, const char *path);
 void spg_trace_line(spg_t *m, FILE *f);
 
