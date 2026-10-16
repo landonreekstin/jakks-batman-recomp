@@ -1,11 +1,15 @@
 /* SDL2 front end: play The Batman natively.
  *
- *   batman <batman.bin> [--save file.sav] [--scale N] [--frames N]
+ *   batman <batman.bin> [--save file.sav] [--scale N] [--frames N] [--record script.txt]
  *
  * Keys: arrows = joypad, Z = A (jump), X = B (attack), C = X (search/use),
  *       Enter = Menu, Esc = quit. Game controllers are mapped the same way
  *       (south = A, west = B, north = X, start = Menu).
- * The 24C04 save EEPROM is kept in --save (default batman.sav next to the ROM). */
+ * The 24C04 save EEPROM is kept in --save (default batman.sav next to the ROM).
+ *
+ * --record writes the controller state as an input script (tests/inputs format), so
+ * the session can be replayed in MAME and batman-rt by tests/check.sh. A recording
+ * starts from a blank EEPROM, like the MAME capture, and saves to <script>.sav. */
 #include <SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -98,18 +102,27 @@ int main(int argc, char **argv)
     char save_path[1024] = "";
     int scale = 3;
     long max_frames = -1;
+    const char *record_path = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--save") && i + 1 < argc) snprintf(save_path, sizeof(save_path), "%s", argv[++i]);
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--frames") && i + 1 < argc) max_frames = atol(argv[++i]);
+        else if (!strcmp(argv[i], "--record") && i + 1 < argc) record_path = argv[++i];
         else if (argv[i][0] != '-') rom_path = argv[i];
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--frames N] [--record script.txt]\n", argv[0]);
         return 2;
     }
-    if (!save_path[0]) {
+    FILE *rec = NULL;
+    if (record_path) {
+        rec = fopen(record_path, "w");
+        if (!rec) { perror(record_path); return 1; }
+        fprintf(rec, "# vblank hexmask (P1: 8000 up 4000 down 2000 left 1000 right 0800 A 0400 menu 0200 B 0100 X)\n"
+                     "# recorded with recomp/build/batman --record, blank EEPROM\n");
+        snprintf(save_path, sizeof(save_path), "%s.sav", record_path);
+    } else if (!save_path[0]) {
         snprintf(save_path, sizeof(save_path), "%s", rom_path);
         char *dot = strrchr(save_path, '.');
         if (dot && !strchr(dot, '/')) *dot = 0;
@@ -120,7 +133,7 @@ int main(int argc, char **argv)
     if (!rom) return 1;
     static spg_t m;
     spg_init(&m, rom);
-    FILE *sf = fopen(save_path, "rb");
+    FILE *sf = rec ? NULL : fopen(save_path, "rb");
     if (sf) {
         if (fread(m.eeprom.data, 1, EEPROM_SIZE, sf) != EEPROM_SIZE) fprintf(stderr, "%s: short save file\n", save_path);
         fclose(sf);
@@ -164,7 +177,12 @@ int main(int argc, char **argv)
             else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = 0;
             else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
         }
-        m.buttons = read_buttons(pad);
+        /* the buttons set here are what the CPU sees from vblank m.frame on, which is
+         * what an input-script line "<m.frame> <mask>" means to batman-rt and capture.lua.
+         * Nothing is pressed before vblank 1: neither harness applies input at vblank 0. */
+        const uint16_t b = m.frame ? read_buttons(pad) : 0;
+        if (rec && b != m.buttons) fprintf(rec, "%u %04x\n", m.frame, b);
+        m.buttons = b;
         if (!spg_run_frame(&m, NULL, NULL)) {
             fprintf(stderr, "CPU stopped at %06x\n", unsp_lpc(&m.cpu));
             break;
@@ -187,6 +205,11 @@ int main(int argc, char **argv)
     }
 
     save_eeprom(&m, save_path);
+    if (rec) {
+        fprintf(rec, "# end at vblank %u: tests/check.sh <workdir> %u with INPUT=%s\n", m.frame, m.frame, record_path);
+        fclose(rec);
+        fprintf(stderr, "recorded %u vblanks to %s\n", m.frame, record_path);
+    }
     if (pad) SDL_GameControllerClose(pad);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
     SDL_DestroyTexture(tex);

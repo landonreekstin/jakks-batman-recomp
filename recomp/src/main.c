@@ -21,7 +21,8 @@ static FILE *dump_out;
 static FILE *wav_out;
 static const char *snap_dir;
 static char snap_frames[4096];
-static struct { uint32_t frame; uint16_t mask; } inputs[4096];
+static struct input_rec { uint32_t frame; uint16_t mask; } *inputs;
+static int cap_inputs;
 static int n_inputs;
 
 static int load_inputs(const char *path)
@@ -30,8 +31,10 @@ static int load_inputs(const char *path)
     if (!f) return 0;
     char line[256];
     unsigned fr, mask;
-    while (fgets(line, sizeof(line), f) && n_inputs < 4096)
+    while (fgets(line, sizeof(line), f))
         if (sscanf(line, "%u %x", &fr, &mask) == 2) {
+            if (n_inputs == cap_inputs)
+                inputs = realloc(inputs, (size_t)(cap_inputs = cap_inputs ? cap_inputs * 2 : 4096) * sizeof(*inputs));
             inputs[n_inputs].frame = fr;
             inputs[n_inputs++].mask = (uint16_t)mask;
         }
@@ -69,8 +72,11 @@ static int want_snap(uint32_t frame)
 
 static void dump_frame(spg_t *m)
 {
-    for (int i = 0; i < n_inputs; i++)
-        if (inputs[i].frame == m->frame) m->buttons = inputs[i].mask;
+    static int next_input; /* scripts are in vblank order */
+    while (next_input < n_inputs && inputs[next_input].frame <= m->frame) {
+        if (inputs[next_input].frame == m->frame) m->buttons = inputs[next_input].mask;
+        next_input++;
+    }
     if (snap_dir && m->frame && want_snap(m->frame)) {
         char path[1024];
         snprintf(path, sizeof(path), "%s/f%05u.png", snap_dir, m->frame);

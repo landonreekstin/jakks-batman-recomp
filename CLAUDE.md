@@ -60,6 +60,12 @@ PPU/SPU work.
 Keys: arrows, Z = A (jump), X = B (attack), C = X (search/use), Enter = Menu, Esc = quit.
 The save goes to `target/batman.sav` (override with `--save`).
 
+`--record tests/inputs/<name>.txt` writes the session as an input script, so real play
+becomes a MAME comparison: `INPUT=tests/inputs/<name>.txt tests/check.sh <workdir> <vblanks>`
+(the last line of the script gives the vblank count). Recordings start from a blank EEPROM,
+like the MAME capture, and save to `<name>.txt.sav`. Both captures write ~15 KB per vblank
+(RAM + video RAM), so a 10-minute session is about 0.5 GB per side.
+
 ## Tools / quirks
 
 - Disassembly: `unidasm -arch unsp12 -xchbytes`. Ghidra: `unsp:LE:16:default`. naken_asm
