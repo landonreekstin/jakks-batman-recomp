@@ -115,15 +115,19 @@ draws all 183 frames correctly assembled.
   - `FUN_0daf22(id)` starts one. RAM 0x0184/0x0185 is the 16.16 frame counter, stepped by fps/60
     a tick (0x0186/0x0187).
   - There are 44 animations: 0–7 the B combos and hero attacks, 8–14 idles and the run, 15–18
-    and 38–41 jumps, 19–22 fight stances, 23–26 hurt, knockdown and getting up, 27–37 Batarang
-    throws and others.
+    and 38–41 jumps, 19–21 crouch (frames 38–40), 22 the stance after a crouch or between moves
+    (frame 41), 23–26 hurt, knockdown and getting up, 27–37 Batarang throws and others.
+  - Standing still plays animation 11 (frames 3–4). Measured from the frame number at RAM
+    0x0184 over session1: 4 is the most common frame.
 - **Staff fighter timing**, measured by matching on-screen sprites to its frames in session1 (RAM
   dump): each frame is held 4–5 ticks. The sequences are thrust 69, 70, 71 (74, 75), wind-up 42
   into 51–54, and upswing 110–113 into 116–118.
 - **`mods/robin` v2** (`generate.py`) rebuilds the player's frames 0–138 from staff-fighter frames
   (thug frames for the knockdown):
-  - each frame is repainted by rule (head, hair, mask, tunic/legs split, staff by shape, cape)
-    and re-cut into pieces;
+  - each frame is repainted by rule (tunic/legs split, staff by shape, cape), gets one hand-drawn
+    head (`HEAD`) in place of the source's, and is re-cut into pieces;
+  - idles and the stance use the fighter's upright frames 23–24. The fighter has no crouch, so
+    the crouch is the thug's frame 39, with his chain removed and a staff drawn in;
   - the new tiles take the place of Batman's 443 tiles that only frames 0–138 use (it uses about
     415);
   - the frame records go in Batman's record space (about 4100 of 4900 words);

@@ -8,10 +8,11 @@ The output holds edited copies of the original art, so like target/ it stays out
 How (formats in notes/sprites.md):
   - Each of the player's frames 0-138 (the ones the animation table at 0x5744 uses) is rebuilt
     from a frame of the staff fighter (frame list 0x05A2E5; slim, with a real staff and its own
-    attack poses and boxes), or, for hurt/knockdown, the thug at 0x05F16C. SLOTS says which.
+    attack poses and boxes), or, for hurt/knockdown and the crouch (the fighter has none), the
+    thug at 0x05F16C. ANIM_SOURCES says which.
   - Each source frame is assembled, repainted as Robin (robinize: red tunic, green legs and
-    sleeves, a narrow cape along the back, black spiky hair, a domino mask under a strip of
-    forehead, a narrower chin) and cut back into 16x16 pieces. The pieces keep the source layout,
+    sleeves, a narrow cape along the back, and one drawn head, HEAD: spiky hair, a domino mask
+    under a strip of forehead, a pointed chin) and cut back into 16x16 pieces. The pieces keep the source layout,
     plus extra ones where the cape reaches outside it. Identical tiles are shared.
   - The tiles go where Batman's tiles were (those only frames 0-138 use: 443 of them), the frame
     records where Batman's records 0-138 were, and the frame list points at them. Frames 139-182
@@ -52,6 +53,23 @@ PALETTE = {
     WHITE: c(31, 31, 31), WOOD: c(18, 11, 5), BLACK: 0,
 }
 
+# Robin's head, facing right: spiky black hair swept back, a strip of forehead, the domino mask
+# with both eyes showing, and a narrow pointed chin. K hair, S/s/d skin light/mid/dark, M mask,
+# W eye.
+HEAD = [
+    "..K.K.K..",
+    ".KKKKKKK.",
+    "KKKKKKKKK",
+    "KKKSSSSS.",
+    "KKsMWMWMM",
+    ".KssMMMss",
+    ".KsssssS.",
+    "..dssss..",
+    "...dss...",
+]
+HEAD_SHIFT = 1   # columns forward of the source head's centre
+HEAD_COLOURS = {"K": BLACK, "S": SKIN_L, "s": SKIN, "d": SKIN_D, "M": BLACK, "W": WHITE}
+
 # what each source palette index is: suit ramp (light..dark), skin ramp, staff, etc.
 CLASSES = {
     # skin: seven browns, light to dark (6b14 6666 560d 4989 3946 2ce4 18a4); the staff is drawn
@@ -63,6 +81,10 @@ CLASSES = {
            "skin": [11, 12, 13, 14], "white": [5], "belt": [], "hair": [10], "tip": [], "wood": [],
            "black": [15]},
 }
+# the thug's crouch: his trousers are the shirt's colour (split at the waist like the fighter's),
+# 6-9 are his boots and chains (the chains go; Robin gets a staff, CROUCH_STAFF)
+CROUCH = {"suit": [1, 2, 3, 4], "skin": [11, 12, 13, 14], "white": [5], "belt": [], "hair": [10],
+          "tip": [], "wood": [], "black": [15], "chain": [6, 7, 8, 9]}
 
 # player animation id -> source frames, resampled onto that animation's slots
 F, T = FIGHTER, THUG
@@ -75,13 +97,14 @@ ANIM_SOURCES = {
     5: (F, [42, 51, 52, 53, 54, 57, 58]),       # wind-up and thrust
     6: (F, [86, 87, 88, 89]),                   # down+B: low sweep
     7: (F, list(range(97, 104))),               # spin, second half
-    8: (F, [124]), 9: (F, [0]), 10: (F, [23]), 11: (F, [23, 24]),
+    8: (F, [23]), 9: (F, [0]), 10: (F, [23]), 11: (F, [23, 24]),   # idles: upright
     12: (F, [25, 26, 27, 28, 29, 30, 31, 32]),  # run (loops)
     13: (F, [32, 33, 39, 40]), 14: (F, [33]),
     15: (F, [34, 35, 36, 37, 38, 39, 40]),      # jump
     16: (F, [34, 35, 36, 37, 38]),
     17: (F, [36, 37, 57, 58, 58]),              # jump kick -> staff thrust in the air
-    19: (F, [124, 125]), 20: (F, [125]), 21: (F, [124]), 22: (F, [124]),
+    19: (T, [39, 39]), 20: (T, [39]), 21: (T, [39]),   # crouch: the thug's (no fighter crouch)
+    22: (F, [23]),                              # stance (after a crouch, between moves)
     23: (T, [78, 79]), 24: (T, [79, 80]),       # hurt
     25: (T, [78, 79, 80, 81, 82, 83]),          # knocked down
     26: (T, [83, 84, 85, 86, 87, 88]),          # lying, getting up
@@ -97,6 +120,8 @@ ATTACK_ANIMS = {0, 1, 2, 5, 6, 17}
 
 MELEE_RANGE_CMP = 0x0DADD5   # FUN_0dada3: cmp r3, 0x28 (6-bit immediate)
 MELEE_RANGE = 60
+
+CROUCH_STAFF = ((-3, -5), (25, -16))   # through the thug's right hand at (11, -11)
 
 BIRD_SPEED_INSN = 0x0657AF   # FUN_0657a7: r3 = 03, the Batarang's speed (phase step = speed/60)
 BIRD_SPEED = 5
@@ -181,9 +206,20 @@ def robinize(img, cls):
             and neck + 0.2 * (feet - neck) <= y <= neck + 0.65 * (feet - neck)]
     waist = max(belt) if len(belt) >= 2 else neck + int(0.42 * (feet - neck))
 
+    # the thug's boots/shins share the chain's colours: they are the part that reaches the feet
+    chain = {p for p, v in img.items() if v in cls.get("chain", ())}
+    shins = set()
+    for q in chain:
+        if q[1] >= feet - 1 and q not in shins:
+            shins |= component(chain, q)
+
     out = {}
     for p, v in img.items():
         x, y = p
+        if v in cls.get("chain", ()):
+            if p in shins:
+                out[p] = ramp(v, cls["chain"], [GRN, GRN, GRN_D, GRN_D])
+            continue                                   # the chain goes
         if p in staff:
             out[p] = YEL_L if v in suit[:1] else WOOD if v in suit or v in skin[:2] else BRN_D
         elif v in cls.get("torso", ()):
@@ -210,25 +246,19 @@ def robinize(img, cls):
     if head:
         x0, x1 = min(x for x, _ in head), max(x for x, _ in head)
         y0, y1 = min(y for _, y in head), max(y for _, y in head)
-        hair_rows = max(2, (y1 - y0 + 1) * 35 // 100)
-        for (x, y) in head:
-            r = y - y0
-            if r < hair_rows:
-                out[(x, y)] = BLACK                        # hair
-            elif r == hair_rows:
-                out[(x, y)] = SKIN_L                       # forehead: the gap above the mask
-            elif r == hair_rows + 1 and x > x0:
-                out[(x, y)] = WHITE if x == x1 - 1 else BLACK   # domino mask, one eye showing
-        for x in range(x0, x1 + 1, 2):                     # spikes on top
-            out[(x, y0 - 1)] = BLACK
-        out[(x0 - 1, y0 + 1)] = BLACK                      # and swept back
-        out[(x0 - 2, y0)] = BLACK
-        out[(x0 - 1, y0)] = BLACK
-        # slimmer, pointed chin: trim the back of the lowest two rows of the face
-        for y, keep in ((y1, 2), (y1 - 1, 4)):
-            row = sorted(x for x, yy in head if yy == y)
-            for x in row[:-keep] if len(row) > keep else []:
-                out.pop((x, y), None)
+        # Robin's head, drawn once (HEAD) and put where the source head was: chin on its chin,
+        # facing forward. The source head (and the thug's hair) goes.
+        for q in head:
+            out.pop(q, None)
+        for q, v in img.items():
+            if v in cls.get("hair", ()) and q in out and abs(q[0] - (x0 + x1) / 2) <= 7 \
+                    and y0 - 6 <= q[1] <= y1:
+                del out[q]
+        hx, hy = (x0 + x1 + 1) // 2 - len(HEAD[0]) // 2 + HEAD_SHIFT, y1 - len(HEAD) + 1
+        for r, row in enumerate(HEAD):
+            for k, ch in enumerate(row):
+                if ch != ".":
+                    out[(hx + k, hy + r)] = HEAD_COLOURS[ch]
 
         # a narrow cape close to the back, from the shoulders to the upper thigh
         shoulder, bottom = y1 + 1, waist + (feet - waist) // 3
@@ -245,6 +275,17 @@ def robinize(img, cls):
                     if (xl - i, y) not in out:
                         out[(xl - i, y)] = BRN_D if i == w else YEL
     return out
+
+
+def draw_staff(img, a, b):
+    """a staff from a to b behind the body: wood with a dark underside, yellow tips"""
+    (xa, ya), (xb, yb) = a, b
+    n = max(abs(xb - xa), abs(yb - ya))
+    for i in range(n + 1):
+        x, y = xa + (xb - xa) * i // n, ya + (yb - ya) * i // n
+        tip = i < 2 or i > n - 2
+        for q, v in (((x, y), YEL_L if tip else WOOD), ((x, y + 1), YEL if tip else BRN_D)):
+            img.setdefault(q, v)
 
 
 def cut(img, src_pieces):
@@ -284,7 +325,7 @@ def main():
     for s, (lst, f) in EXTRA_SLOTS.items():
         slots.setdefault(s, (lst, f, None))
     for s in range(PLAYER_SLOTS):
-        slots.setdefault(s, (FIGHTER, 124, None))
+        slots.setdefault(s, (FIGHTER, 23, None))
 
     # free tiles: Batman's, used by frames 0-138 only
     bat = sprites.frames(rom)
@@ -308,7 +349,9 @@ def main():
             attack = [b[:4] + (0x14,) for b in attack]
         key = (lst, f, tuple(attack), tail, mine["flags"], mine["word2"])
         if key not in built:
-            img = robinize(compose(rom, src), CLASSES[lst])
+            img = robinize(compose(rom, src), CROUCH if (lst, f) == (THUG, 39) else CLASSES[lst])
+            if (lst, f) == (THUG, 39):
+                draw_staff(img, *CROUCH_STAFF)
             pieces = []
             for x, y, px in cut(img, src["pieces"]):
                 k = tuple(v for r in px for v in r)
