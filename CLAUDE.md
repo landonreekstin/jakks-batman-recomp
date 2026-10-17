@@ -49,6 +49,9 @@ PPU/SPU work.
   - `example-text`, baked into a ROM, matches MAME;
   - `tests/mods/retf-identity` replaces 4944 RETFs through a hook and still matches MAME;
   - unmodded runs are unchanged.
+- **A second session matches MAME**: `tests/inputs/session2.txt` (11,760 vblanks), Street Party
+  played to Game Over. All frames are identical, all writes and reads match, and 3/3 snapshots are
+  identical.
 - **A real play session matches MAME**: `tests/inputs/session1.txt`, recorded by the user with
   `--record`. It covers 68,520 vblanks (19 min): the Street Party brawler level, then the
   Fast Lane Batcycle level to Level Completed. All frames are identical, all 20,586,666 peripheral writes and
@@ -98,7 +101,13 @@ who reads it; `tools/romcov.py` summarises and draws it. Findings are in `notes/
 so far nothing above word 0x100000 is ever read, so that space looks free for new content.
 Graphics are decoded (`notes/graphics.md`, `tools/gfx.py`, which rebuilds screens
 pixel-identically from `batman-rt --vdump` dumps). Game variables are in `notes/ram-map.md`
-(`tools/ramsearch.py`): level id, health, special meter, player X, camera. Next: the level format.
+(`tools/ramsearch.py`): level id, health, lives, special meter, player X, camera, brawler sections.
+The background map format is decoded (`notes/level-format.md`). `tools/level.py` lists the 24
+scenes, renders whole maps to PNG, and extracts/builds them as JSON. Rebuilding reproduces all 24
+scenes word for word, and every on-screen tile column in both levels of `session1` matches the
+decoded maps. `batman-rt --watch out.txt w:LO-HI,r:LO-HI,from:N,to:N` logs CPU writes and data reads
+with their PC, for tracing data back to code. Next: an edited Street Party as a mod, and the
+undecoded scene slots (collision, sections, enemies).
 
 ## Tools / quirks
 

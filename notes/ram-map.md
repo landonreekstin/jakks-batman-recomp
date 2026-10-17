@@ -1,7 +1,9 @@
 # RAM map
 
-Word addresses. Found with `tools/ramsearch.py` over the RAM dump of `tests/inputs/session1.txt`
-(`batman-rt --dump`, 68,520 vblanks, which matches MAME on every frame). Each entry says how it
+Word addresses. Found with `tools/ramsearch.py` over the RAM dumps (`batman-rt --dump`) of two
+recordings, both of which match MAME on every frame:
+- `tests/inputs/session1.txt`: 68,520 vblanks;
+- `tests/inputs/session2.txt`: 11,760 vblanks, Street Party played to Game Over. Each entry says how it
 was confirmed:
 - **poke**: a mod pinned the value, and the screen changed as predicted;
 - **math**: it predicts register values or positions;
@@ -18,20 +20,20 @@ was confirmed:
 | 0x0192 | player Y? (0x83 jumping at 4450, 0xC8 on the ground at 11050) | | trace, unconfirmed |
 | 0x208E | camera X in level pixels (copy at 0x2603) | | math: written to page 2's X scroll (0x2816) the next frame, in 100% of frames; page 1 gets half (parallax) |
 | 0x208F | camera Y (copy at 0x2604) | 5 at 11050 = page 2's Y scroll | math |
+| 0x2099 | lives (the heads under the health bar) | 4 at the start; −1 per death (session2: 4→0 at vblanks 5634, 7060, 8474, 9895), Game Over after the death at 0 | poke: 1 → one head; 9 → nine heads and no Game Over |
+| 0x0150–0x015A | brawler section loop, pointed to by 0x270B | [0] length in tile columns, [1] start column, [7] map column, [8] = 0x0158 section number (0..0x0B in Street Party) | code: FUN_00e74e (notes/level-format.md) |
+| 0x01E8 | +0x0C at each respawn (f019, f025, f031...) | | trace, meaning unknown |
+| 0x25E9, 0x2603 | layer structs for page 1 and page 2 (map pointer, width, tile base, camera limits) | | code: FUN_00bfb5 (notes/level-format.md) |
 | 0x0809 | vblank counter, incremented by the IRQ handler | | code (notes/game-structure.md) |
 | 0x088E–0x108D, 0x108E–0x148D | page 1 tilemap and tile attributes | | PPU registers (notes/graphics.md) |
 | 0x148E–0x1C8D, 0x1C8E–0x208D | page 2 tilemap and tile attributes | | PPU registers |
 
 ## Candidates
 
-- 0x0158 / 0x015D: 0→0x0B through Street Party, in steps at 6495, 9381, 10947, 12274, 14638,
-  16091 and 24902. These are probably level-section or checkpoint progress, matching the
-  load bursts in notes/rom-usage.md.
+- 0x015D: follows 0x0158, the section number.
 - 0x0180: moves with the player. It's 0x2C less than player X at 11050, maybe a hitbox edge.
 - 0x0176: climbs steadily while walking (0x0327 → 0x04CB over 4400–4700). Unknown.
 - 0x0170–0x01C7: looks like the player object (positions, state words 0x8000/0x8016...).
-- **Lives**: not found. No word holds 4–6 for the whole level, and the five heads under the
-  health bar never changed in session1. They may not be lives.
 
 ## Fill patterns
 

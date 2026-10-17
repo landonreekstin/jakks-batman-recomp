@@ -13,6 +13,9 @@
  *             [--romcov out.bin] ROM usage map: per ROM-space word a byte of SPG_COV_* bits, then
  *                                its first vblank as u32 (tools/romcov.py reads it)
  *             [--bake out.bin]   write the ROM file with the mods' patches applied, for MAME
+ *             [--watch out.txt spec] log CPU accesses as "vblank W|R pc addr value"; spec is a
+ *                                comma list of w:LO-HI (writes), r:LO-HI (data reads), from:N
+ *                                and to:N (vblanks), numbers in hex except from/to
  *
  * --replay feeds MAME's recorded peripheral reads (tools/mame/capture.lua) back in, so the
  * CPU can be checked against MAME before the peripherals are modelled exactly. The outputs
@@ -146,6 +149,9 @@ int main(int argc, char **argv)
     unsigned frames = 600;
     uint64_t trace_instr = 0;
     const char *state_save = NULL, *state_load = NULL, *mod_list = NULL, *mods_dir = "mods", *bake = NULL, *romcov = NULL;
+    const char *watch = NULL, *watch_spec = NULL;
+    FILE *watch_out = NULL;
+    unsigned watch_from = 0, watch_to = ~0u;
     unsigned state_save_at = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -165,6 +171,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
         else if (!strcmp(argv[i], "--bake") && i + 1 < argc) bake = argv[++i];
         else if (!strcmp(argv[i], "--romcov") && i + 1 < argc) romcov = argv[++i];
+        else if (!strcmp(argv[i], "--watch") && i + 2 < argc) { watch = argv[++i]; watch_spec = argv[++i]; }
         else if (!strcmp(argv[i], "--vdump") && i + 1 < argc) vdump_dir = argv[++i];
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             if ((snap_filter = crt_mode_parse(argv[++i])) < 0) { fprintf(stderr, "unknown filter %s\n", argv[i]); return 2; }
@@ -200,6 +207,20 @@ int main(int argc, char **argv)
         m.romcov = calloc(ROM_SPACE_WORDS, 1);
         m.romcov_first = calloc(ROM_SPACE_WORDS, 4);
     }
+    if (watch) {
+        if (!(watch_out = fopen(watch, "w"))) { perror(watch); return 1; }
+        m.watch_wlo = m.watch_rlo = 1; /* empty ranges */
+        char spec[256];
+        snprintf(spec, sizeof(spec), "%s", watch_spec);
+        for (char *t = strtok(spec, ","); t; t = strtok(NULL, ",")) {
+            unsigned lo, hi;
+            if (sscanf(t, "w:%x-%x", &lo, &hi) == 2) { m.watch_wlo = lo; m.watch_whi = hi; }
+            else if (sscanf(t, "r:%x-%x", &lo, &hi) == 2) { m.watch_rlo = lo; m.watch_rhi = hi; }
+            else if (sscanf(t, "from:%u", &lo) == 1) watch_from = lo;
+            else if (sscanf(t, "to:%u", &lo) == 1) watch_to = lo;
+            else { fprintf(stderr, "--watch: bad spec item '%s'\n", t); return 1; }
+        }
+    }
     if (replay && !spg_load_replay(&m, replay)) { perror(replay); return 1; }
     if (iolog && !(m.iolog = fopen(iolog, "w"))) { perror(iolog); return 1; }
     if (dump && !(dump_out = fopen(dump, "wb"))) { perror(dump); return 1; }
@@ -223,6 +244,7 @@ int main(int argc, char **argv)
     int ok = 1;
     while (m.frame < frames) {
         if (state_save && m.frame == state_save_at && !spg_state_save(&m, rom_hash, state_save)) return 1;
+        if (watch_out) m.watch = m.frame + 1 >= watch_from && m.frame + 1 <= watch_to ? watch_out : NULL;
         if (!spg_run_frame(&m, trace, &trace_instr)) { ok = 0; break; }
         mods_frame(&m);
         snap_frame(&m);
@@ -246,6 +268,7 @@ int main(int argc, char **argv)
         }
     }
     if (m.iolog) fclose(m.iolog);
+    if (watch_out) fclose(watch_out);
     if (dump_out) fclose(dump_out);
     if (wav_out) { wav_header(wav_out, wav_samples); fclose(wav_out); }
     if (trace) fclose(trace);

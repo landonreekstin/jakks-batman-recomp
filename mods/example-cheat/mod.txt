@@ -1,6 +1,7 @@
-# Example cheat: infinite health in the brawler levels. 0x01E9 is the player's health
+# Example cheat: infinite health and lives in the brawler levels. 0x01E9 is the player's health
 # (0x20 = full, -2 per hit; see notes/ram-map.md); it is refilled at every vblank.
 # The driving levels use other variables.
 name example-cheat
 rom  4ec5438d16e222cc624820f45579071b8f8a4e91c65ae76e5425565509271766
 poke 01e9 0020 always
+poke 2099 0004 always   # lives (the heads under the health bar)

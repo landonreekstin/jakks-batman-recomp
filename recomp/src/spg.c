@@ -260,6 +260,8 @@ static uint16_t bus_read(void *ctx, uint32_t addr)
 {
     spg_t *m = ctx;
     const uint32_t a = addr & 0x3fffff;
+    if (m->watch && a >= m->watch_rlo && a <= m->watch_rhi && a != unsp_lpc(&m->cpu))
+        fprintf(m->watch, "%u R %06x %06x %04x\n", m->frame + 1, unsp_lpc(&m->cpu), a, spg_peek(m, a));
     if (a < 0x2800) return m->ram[a];
     if (a >= 0x2900 && a < 0x3000) return m->vram[a - 0x2900];
     if (!replayed(a)) { /* ROM, including the holes in the I/O page */
@@ -288,6 +290,8 @@ static void bus_write(void *ctx, uint32_t addr, uint16_t data)
 {
     spg_t *m = ctx;
     const uint32_t a = addr & 0x3fffff;
+    if (m->watch && a >= m->watch_wlo && a <= m->watch_whi)
+        fprintf(m->watch, "%u W %06x %06x %04x\n", m->frame + 1, unsp_lpc(&m->cpu), a, data);
     if (a < 0x2800) { m->ram[a] = data; return; }
     if (a >= 0x2900 && a < 0x3000) { m->vram[a - 0x2900] = data; return; }
     if (!replayed(a)) return; /* ROM */

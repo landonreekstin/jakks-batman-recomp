@@ -63,6 +63,11 @@ typedef struct spg {
     uint8_t *romcov;
     uint32_t *romcov_first;
 
+    /* memory watch (--watch): logs CPU writes to [wlo,whi] and CPU data reads from [rlo,rhi]
+       as "vblank W|R pc addr value" */
+    FILE *watch;
+    uint32_t watch_wlo, watch_whi, watch_rlo, watch_rhi;
+
     /* PC hooks for mods (mod.c): one bit per word address; pc_hook returns 1 if it moved PC */
     const uint8_t *hook_map;
     int (*pc_hook)(struct spg *m, uint32_t pc);
