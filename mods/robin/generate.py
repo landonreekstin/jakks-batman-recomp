@@ -57,15 +57,14 @@ PALETTE = {
 # with both eyes showing, and a narrow pointed chin. K hair, S/s/d skin light/mid/dark, M mask,
 # W eye.
 HEAD = [
-    "..K.K.K..",
-    ".KKKKKKK.",
-    "KKKKKKKKK",
-    "KKKSSSSS.",
-    "KKsMWMWMM",
-    ".KssMMMss",
-    ".KsssssS.",
-    "..dssss..",
-    "...dss...",
+    ".K.K.K..",
+    "KKKKKKK.",
+    "KKKSSSS.",
+    "KKMWMWMM",
+    ".KsMMMss",
+    ".Ksssss.",
+    "..dsss..",
+    "...ds...",
 ]
 HEAD_SHIFT = 1   # columns forward of the source head's centre
 HEAD_COLOURS = {"K": BLACK, "S": SKIN_L, "s": SKIN, "d": SKIN_D, "M": BLACK, "W": WHITE}
