@@ -12,7 +12,7 @@ How (formats in notes/sprites.md):
     thug at 0x05F16C. ANIM_SOURCES says which.
   - Each source frame is assembled, repainted as Robin (robinize: red tunic, green legs and
     sleeves, a narrow cape along the back, and one drawn head, HEAD: spiky hair, a domino mask
-    under a strip of forehead, a pointed chin) and cut back into 16x16 pieces. The pieces keep the source layout,
+    under a strip of forehead, a rounded jaw; upright over the body) and cut back into 16x16 pieces. The pieces keep the source layout,
     plus extra ones where the cape reaches outside it. Identical tiles are shared.
   - The tiles go where Batman's tiles were (those only frames 0-138 use: 443 of them), the frame
     records where Batman's records 0-138 were, and the frame list points at them. Frames 139-182
@@ -53,18 +53,19 @@ PALETTE = {
     WHITE: c(31, 31, 31), WOOD: c(18, 11, 5), BLACK: 0,
 }
 
-# Robin's head, facing right: spiky black hair swept back, a strip of forehead, the domino mask
-# with both eyes showing, and a narrow pointed chin. K hair, S/s/d skin light/mid/dark, M mask,
+# Robin's head, facing right, in the game's style (outlined, shaded at the back, about the
+# fighter's head size): spiky black hair swept back, a strip of forehead, the domino mask with
+# both eyes showing, a rounded jaw. K hair, S/s/d skin light/mid/dark, M mask,
 # W eye.
 HEAD = [
-    ".K.K.K..",
-    "KKKKKKK.",
-    "KKKSSSS.",
-    "KKMWMWMM",
-    ".KsMMMss",
-    ".Ksssss.",
-    "..dsss..",
-    "...ds...",
+    ".K.K.K.",
+    "KKKKKK.",
+    "KKKSSS.",
+    "KKMWMWK",
+    "KKdssSS",
+    ".KdsssK",
+    ".Kddss.",
+    "..Kdsd.",
 ]
 HEAD_SHIFT = 1   # columns forward of the source head's centre
 HEAD_COLOURS = {"K": BLACK, "S": SKIN_L, "s": SKIN, "d": SKIN_D, "M": BLACK, "W": WHITE}
@@ -178,9 +179,17 @@ def robinize(img, cls):
     # the head: skin above the collar (the middle of the suit's top rows); a raised hand or the
     # staff can be higher, so it isn't simply the topmost skin
     head = set()
-    suitpx = [p for p, v in img.items() if v in suit and p not in staff]
-    if skinpx and suitpx:
+    # the body: the biggest patch of suit (the staff's coloured tips are suit colours too)
+    suitall = {p for p, v in img.items() if v in suit and p not in staff}
+    suitpx, rest = set(), set(suitall)
+    while rest:
+        part = component(rest, next(iter(rest)))
+        rest -= part
+        suitpx = max(suitpx, part, key=len)
+    if suitpx:
         s_top = min(y for _, y in suitpx)
+        s_xc = sum(x for x, y in suitpx if y <= s_top + 3) / len([1 for _, y in suitpx if y <= s_top + 3])
+    if skinpx and suitpx:
         collar = [x for x, y in suitpx if y <= s_top + 2]
         xc = sum(collar) / len(collar)
         cand = {p for p in skinpx if p[1] <= s_top + 2 and abs(p[0] - xc) <= 6}
@@ -192,7 +201,8 @@ def robinize(img, cls):
     if True:  # the first row of skin at least 3 px wide (a staff isn't): the top of the head;
               # it replaces the collar guess, which can land on a shoulder or the staff
         allskin = {p for p, v in img.items() if v in skin}
-        wide = [p for p in allskin if all((p[0] + i, p[1]) in allskin for i in range(3))]
+        wide = [p for p in allskin if all((p[0] + i, p[1]) in allskin for i in range(3))
+                and (not suitpx or "torso" in cls or (s_top - 20 <= p[1] <= s_top + 4 and abs(p[0] + 1 - s_xc) <= 10))]
         if wide:
             h0 = min(wide, key=lambda p: (p[1], p[0]))
             if h0[1] - top < 0.3 * height:
@@ -249,11 +259,23 @@ def robinize(img, cls):
         # facing forward. The source head (and the thug's hair) goes.
         for q in head:
             out.pop(q, None)
+        for q, v in img.items():   # the face's edges the head region left out (nose, jaw)
+            if v in skin and q not in staff and x0 - 2 <= q[0] <= x1 + 3 and y0 - 3 <= q[1] <= y1:
+                out.pop(q, None)
         for q, v in img.items():
             if v in cls.get("hair", ()) and q in out and abs(q[0] - (x0 + x1) / 2) <= 7 \
                     and y0 - 6 <= q[1] <= y1:
                 del out[q]
-        hx, hy = (x0 + x1 + 1) // 2 - len(HEAD[0]) // 2 + HEAD_SHIFT, y1 - len(HEAD) + 1
+        # upright: on top of the shoulders, even where the source hunches forward (the run) and
+        # its head hangs in front of the chest
+        if suitpx:
+            t_top, xc = s_top, round(s_xc)
+        else:
+            t_top, xc = y1, (x0 + x1 + 1) // 2
+        cx = (x0 + x1 + 1) // 2 + HEAD_SHIFT
+        if "torso" not in cls:   # not the thug lying down
+            cx = min(max(cx, xc - 3), xc + 2)
+        hx, hy = cx - len(HEAD[0]) // 2, y1 - len(HEAD) + 1
         for r, row in enumerate(HEAD):
             for k, ch in enumerate(row):
                 if ch != ".":
