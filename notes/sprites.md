@@ -71,9 +71,7 @@ draws all 183 frames correctly assembled.
 - **`mods/robin`'s staff:**
   - the range check goes from 40 to 60 px, and the forward attack boxes and sparks move 20 px
     further out. Robin then hits for 2 out to D = 62;
-  - `plugin.c` draws the staff as 2 extra sprites, because the shared sprite bank fills its 64K
-    window and the frames can't grow;
-  - the staff tiles are in the ROM's upper half, so the staff only shows in our runtime.
+  - (v1 drew the staff with a plugin; v2 uses the staff fighter's own staff, see below.)
 
 ## Batarang (found for Robin's Birdarang)
 
@@ -93,6 +91,47 @@ draws all 183 frames correctly assembled.
 - **Robin's Birdarang** (`mods/robin`): SPEED 5 (12 frames a leg), range ×4/3 (240 px), and the
   spin frames recoloured red/yellow. Thrown at an enemy pinned 150 px away, it hits in 6 frames;
   the Batarang tops out at about 129 px there and misses.
+
+## The whole sprite bank, and animations (found for Robin v2)
+
+- **Frame lists.** The bank at 0x051C40 holds about 30 frame lists, one or more per character.
+  Each is a run of offsets whose records end exactly where the next begins. The ones used so far:
+
+  | List | Character |
+  |---|---|
+  | 0x054B4B | Batman, 183 frames |
+  | 0x05A2E5 | the yellow staff fighter (Street Party, 2nd half), 130 frames |
+  | 0x05A36F | the bomb thrower |
+  | 0x05F16C | a thug with fall, lie and get-up frames (78–88) |
+  | 0x05D2CE | Harley Quinn (mallet) |
+
+  Palettes: staff fighter at 0x051A00, thug at 0x051B50.
+- **Batman's frames by use.**
+  - 0–138 come from the animation table.
+  - 144–150 and 161–165 are a separate cape, and 151–182 a smaller capeless body.
+  - 139–182 never appear in session1.
+- **Player animations, ROM 0x5744.** 4 words per animation: first frame, last frame, loop-to
+  frame (1-based), fps.
+  - `FUN_0daf22(id)` starts one. RAM 0x0184/0x0185 is the 16.16 frame counter, stepped by fps/60
+    a tick (0x0186/0x0187).
+  - There are 44 animations: 0–7 the B combos and hero attacks, 8–14 idles and the run, 15–18
+    and 38–41 jumps, 19–22 fight stances, 23–26 hurt, knockdown and getting up, 27–37 Batarang
+    throws and others.
+- **Staff fighter timing**, measured by matching on-screen sprites to its frames in session1 (RAM
+  dump): each frame is held 4–5 ticks. The sequences are thrust 69, 70, 71 (74, 75), wind-up 42
+  into 51–54, and upswing 110–113 into 116–118.
+- **`mods/robin` v2** (`generate.py`) rebuilds the player's frames 0–138 from staff-fighter frames
+  (thug frames for the knockdown):
+  - each frame is repainted by rule (head, hair, mask, tunic/legs split, staff by shape, cape)
+    and re-cut into pieces;
+  - the new tiles take the place of Batman's 443 tiles that only frames 0–138 use (it uses about
+    415);
+  - the frame records go in Batman's record space (about 4100 of 4900 words);
+  - the animation table keeps its slots, with attacks at 13 fps;
+  - the melee range is 60.
+
+  Everything is data. MAME running the baked ROM matches the native run over 6100 vblanks of
+  session2 (3 snapshots).
 
 ## Open
 

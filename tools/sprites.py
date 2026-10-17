@@ -51,6 +51,38 @@ def load_rom(path, mod=None):
     return rom
 
 
+def record(rom, lst, f):
+    """frame f of the frame list at word `lst`: dict with the header words, boxes, tail (effect id,
+    spark x, spark y) and pieces [(x, y, tile)] (tile centres, y down, relative to the origin)"""
+    a = BANK + rom[lst + f]
+    n, k = rom[a], rom[a + 3]
+    boxes = [tuple(s16(v) for v in rom[b:b + 5]) for b in range(a + 4, a + 4 + k, 5)]
+    p = a + 7 + k
+    x = y = 0
+    pieces = []
+    for i in range(n):
+        dx, dy, t = rom[p + 3 * i:p + 3 * i + 3]
+        x += s16(dx)
+        y += s16(dy)
+        pieces.append((x, y, t + TILE_BASE))
+    return {"addr": a, "flags": rom[a + 1], "word2": rom[a + 2], "boxes": boxes,
+            "tail": tuple(rom[a + 4 + k:a + 7 + k]), "pieces": pieces}
+
+
+def encode_record(r):
+    """words of a frame record (inverse of record)"""
+    k = 5 * len(r["boxes"])
+    w = [len(r["pieces"]), r["flags"], r["word2"], k]
+    for b in r["boxes"]:
+        w += [v & 0xFFFF for v in b]
+    w += list(r["tail"])
+    px = py = 0
+    for x, y, t in r["pieces"]:
+        w += [(x - px) & 0xFFFF, (y - py) & 0xFFFF, (t - TILE_BASE) & 0xFFFF]
+        px, py = x, y
+    return w
+
+
 def frames(rom):
     """list of frames; a frame is a list of (x, y, tile) with y down, relative to the origin"""
     out = []

@@ -51,13 +51,12 @@ MODS=example-text INPUT=tests/inputs/level1-start.txt SNAPS=1500 tests/check.sh 
 - `example-level`: an edited Street Party layout. In the opening section the blue building is
   replaced by a stretch from further down the street (made with `tools/level.py`; see below).
   Checked against MAME over the first 6100 vblanks of `tests/inputs/session2.txt`.
-- `robin`: work in progress. Robin's look (black hair, red tunic, green legs, yellow cape) and a
-  staff: B hits in melee from 60 px instead of 40, with longer attack boxes, and `plugin.c` draws
-  the staff. The Batarang becomes a red/yellow Birdarang that flies faster (12 frames out instead
-  of 20) and further (240 px instead of 180). `generate.py` makes `mod.txt` from the ROM (`make -C recomp` runs it). The output holds
-  edited copies of the original art, so it is gitignored. The staff (plugin, upper-half tiles) only
-  works in our runtime. `notes/sprites.md` has the sprite and melee formats; `tools/sprites.py`
-  draws every frame and exports/imports tiles.
+- `robin`: Robin, rebuilt from the game's yellow staff fighter: a slim body, a real staff with the
+  enemy's own attack animations and hit boxes, spiky black hair, a domino mask, a red tunic, green
+  legs and a narrow cape. Also a red/yellow Birdarang, faster and further. `generate.py` makes
+  `mod.txt` from the ROM (`make -C recomp` runs it). The output holds edited copies of the original
+  art, so it is gitignored. It is all data, and checked against MAME. `notes/sprites.md` has the
+  details.
 - `example-lagmeter`: a plugin that hooks `wait_vblank` (0x005CDE) and counts lag frames on screen.
 - `tests/mods/retf-identity`: a test plugin. It replaces a RETF with `api->retf`, and the
   game must still match MAME exactly.
