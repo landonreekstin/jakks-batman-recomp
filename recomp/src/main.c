@@ -7,6 +7,9 @@
  *             [--state-save-at N file] [--state-load file]
  *             [--filter mode]    write --snap PNGs through a CRT filter (crt.h), at 4x
  *             [--mods a,b [--mods-dir dir]]   runtime mods (mod.h); default dir "mods"
+ *             [--vdump dir]      with --snap-frames: also write dir/vNNNNN.bin, the video state
+ *                                at that vblank (PPU regs 0x100, video RAM 0x700, RAM 0x2800 words,
+ *                                little-endian) for tools/gfx.py
  *             [--romcov out.bin] ROM usage map: per ROM-space word a byte of SPG_COV_* bits, then
  *                                its first vblank as u32 (tools/romcov.py reads it)
  *             [--bake out.bin]   write the ROM file with the mods' patches applied, for MAME
@@ -29,6 +32,7 @@ static FILE *dump_out;
 static FILE *wav_out;
 static const char *snap_dir;
 static char snap_frames[4096];
+static const char *vdump_dir;
 static crt_t *snap_crt;
 static int snap_filter;
 static uint32_t *snap_buf;
@@ -84,6 +88,14 @@ static int want_snap(uint32_t frame)
 /* after mods_frame, so that what mods draw is in the picture */
 static void snap_frame(spg_t *m)
 {
+    if (vdump_dir && m->frame && want_snap(m->frame)) {
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/v%05u.bin", vdump_dir, m->frame);
+        FILE *f = fopen(path, "wb");
+        if (!f || fwrite(m->vregs, 2, 0x100, f) != 0x100 || fwrite(m->vram, 2, 0x700, f) != 0x700 ||
+            fwrite(m->ram, 2, 0x2800, f) != 0x2800 || fclose(f))
+            perror(path);
+    }
     if (snap_dir && m->frame && want_snap(m->frame)) {
         char path[1024];
         snprintf(path, sizeof(path), "%s/f%05u.png", snap_dir, m->frame);
@@ -153,6 +165,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
         else if (!strcmp(argv[i], "--bake") && i + 1 < argc) bake = argv[++i];
         else if (!strcmp(argv[i], "--romcov") && i + 1 < argc) romcov = argv[++i];
+        else if (!strcmp(argv[i], "--vdump") && i + 1 < argc) vdump_dir = argv[++i];
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             if ((snap_filter = crt_mode_parse(argv[++i])) < 0) { fprintf(stderr, "unknown filter %s\n", argv[i]); return 2; }
             snap_crt = crt_new(4);
