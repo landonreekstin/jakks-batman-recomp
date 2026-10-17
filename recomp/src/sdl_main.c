@@ -8,9 +8,12 @@
  *       (south = A, west = B, north = X, start = Menu).
  *       F5 = save state, F8 = load state, F6/F7 = previous/next slot (0-9),
  *       Backspace (hold) = rewind, Tab (hold) = fast forward,
- *       F9 / Shift+F9 = next/previous CRT filter, F11 = fullscreen, F12 = screenshot.
+ *       F9 / Shift+F9 = next/previous CRT filter, F11 = fullscreen, F12 = screenshot,
+ *       - / = (or keypad - / +) = volume down/up, M = mute.
  * The 24C04 save EEPROM is kept in --save (default batman.sav next to the ROM). States go
  * to <save file minus .sav>.st<slot>, screenshots to <save file minus .sav>-NNNN.png.
+ * The volume (--volume 0-100, default 100) is remembered in <save file minus .sav>.cfg.
+ * It only scales what goes to the speakers; the emulated sound is unchanged.
  *
  * --record writes the controller state as an input script (tests/inputs format), so
  * the session can be replayed in MAME and batman-rt by tests/check.sh. A recording
@@ -45,12 +48,24 @@ static SDL_AudioDeviceID audio_dev;
 static int16_t audio_buf[4096 * 2];
 static int audio_len;
 static int audio_mute; /* fast forward: generate but drop */
+static int volume = 100, muted; /* percent; the gain is (volume/100)^2, closer to how loudness is heard */
+static int gain = 256;          /* 8.8 fixed point */
+
+static void set_gain(void)
+{
+    gain = muted ? 0 : (volume * volume * 256 + 5000) / 10000;
+}
+
+static int16_t scaled(int16_t v)
+{
+    return (int16_t)((v * gain) >> 8); /* gain <= 256, so no overflow */
+}
 
 static void audio_sample(void *ctx, int16_t l, int16_t r)
 {
     (void)ctx;
-    audio_buf[audio_len * 2] = l;
-    audio_buf[audio_len * 2 + 1] = r;
+    audio_buf[audio_len * 2] = scaled(l);
+    audio_buf[audio_len * 2 + 1] = scaled(r);
     if (++audio_len == 4096) {
         if (audio_dev && !audio_mute) SDL_QueueAudio(audio_dev, audio_buf, sizeof(audio_buf));
         audio_len = 0;
@@ -145,6 +160,25 @@ static uint16_t read_buttons(SDL_GameController *pad)
     return b;
 }
 
+static void load_config(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char line[128];
+    int v;
+    while (fgets(line, sizeof(line), f))
+        if (sscanf(line, "volume %d", &v) == 1 && v >= 0 && v <= 100) volume = v;
+    fclose(f);
+}
+
+static void save_config(const char *path)
+{
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f, "volume %d\n", volume);
+    fclose(f);
+}
+
 /* the next free <base>-NNNN.png */
 static int screenshot(const char *base, const uint32_t *px, int w, int h, char *path, size_t pathlen)
 {
@@ -160,7 +194,7 @@ int main(int argc, char **argv)
 {
     const char *rom_path = NULL;
     char save_path[1024] = "";
-    int scale = 3, filter = CRT_NONE;
+    int scale = 3, filter = CRT_NONE, volume_arg = -1;
     long max_frames = -1;
     const char *record_path = NULL, *mod_list = NULL, *mods_dir = "mods";
     for (int i = 1; i < argc; i++) {
@@ -170,6 +204,10 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--record") && i + 1 < argc) record_path = argv[++i];
         else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
         else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
+        else if (!strcmp(argv[i], "--volume") && i + 1 < argc) {
+            volume_arg = atoi(argv[++i]);
+            if (volume_arg < 0 || volume_arg > 100) { fprintf(stderr, "--volume takes 0-100\n"); return 2; }
+        }
         else if (!strcmp(argv[i], "--filter") && i + 1 < argc) {
             if ((filter = crt_mode_parse(argv[++i])) < 0) {
                 fprintf(stderr, "unknown filter %s (none, scanlines, aperture, composite, crt)\n", argv[i]);
@@ -180,7 +218,7 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100]\n", argv[0]);
         return 2;
     }
     FILE *rec = NULL;
@@ -202,6 +240,12 @@ int main(int argc, char **argv)
         const size_t n = strlen(base);
         if (n > 4 && !strcmp(base + n - 4, ".sav")) base[n - 4] = 0;
     }
+    char cfg_path[1100];
+    snprintf(cfg_path, sizeof(cfg_path), "%s.cfg", base);
+    load_config(cfg_path);
+    if (volume_arg >= 0) volume = volume_arg;
+    set_gain();
+    const int volume_at_start = volume;
 
     uint8_t file_sha[32];
     uint16_t *rom = rom_load(rom_path, file_sha);
@@ -294,6 +338,21 @@ int main(int argc, char **argv)
                                                      ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
                     break;
                 case SDLK_F12: shot = 1; break;
+                case SDLK_MINUS: case SDLK_KP_MINUS:
+                case SDLK_EQUALS: case SDLK_PLUS: case SDLK_KP_PLUS: {
+                    const int down = e.key.keysym.sym == SDLK_MINUS || e.key.keysym.sym == SDLK_KP_MINUS;
+                    volume = down ? (volume > 10 ? volume - 10 : 0) : (volume < 90 ? volume + 10 : 100);
+                    muted = 0;
+                    set_gain();
+                    osd("Volume %d%%", volume);
+                    break;
+                }
+                case SDLK_m:
+                    muted = !muted;
+                    set_gain();
+                    if (muted) osd("Muted");
+                    else osd("Volume %d%%", volume);
+                    break;
                 default: break;
                 }
             }
@@ -361,6 +420,7 @@ int main(int argc, char **argv)
     save_eeprom(&m, save_path);
     if (rec) stop_recording(&rec, record_path, m.frame);
     if (pad) SDL_GameControllerClose(pad);
+    if (volume != volume_at_start) save_config(cfg_path);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);
