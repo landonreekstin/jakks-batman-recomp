@@ -50,6 +50,9 @@ MODS=example-text INPUT=tests/inputs/level1-start.txt SNAPS=1500 tests/check.sh 
 - `example-level`: an edited Street Party layout. In the opening section the blue building is
   replaced by a stretch from further down the street (made with `tools/level.py`; see below).
   Checked against MAME over the first 6100 vblanks of `tests/inputs/session2.txt`.
+- `robin`: work in progress. For now, Batman's sprite palette recoloured to Robin's (yellow cape,
+  red suit). Checked against MAME. `notes/sprites.md` has the sprite format; `tools/sprites.py`
+  draws every frame (`frames`) and exports/imports the tiles for pixel editing (`export`, `import`).
 - `example-lagmeter`: a plugin that hooks `wait_vblank` (0x005CDE) and counts lag frames on screen.
 - `tests/mods/retf-identity`: a test plugin. It replaces a RETF with `api->retf`, and the
   game must still match MAME exactly.

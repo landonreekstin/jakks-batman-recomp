@@ -110,8 +110,10 @@ scenes, renders whole maps to PNG, and extracts/builds them as JSON. Rebuilding 
 scenes word for word, and every on-screen tile column in both levels of `session1` matches the
 decoded maps. `batman-rt --watch out.txt w:LO-HI,r:LO-HI,from:N,to:N` logs CPU writes and data reads
 with their PC, for tracing data back to code. `mods/example-level` (an edited
-Street Party, made with `level.py paste`/`diff`) matches MAME running the baked ROM. Next: the
-undecoded scene slots (collision, sections, enemies), then a new section or level.
+Street Party, made with `level.py paste`/`diff`) matches MAME running the baked ROM. The player's sprite
+frames are decoded (`notes/sprites.md`, `tools/sprites.py`), and `mods/robin` (so far a palette
+swap) matches MAME. In progress: Robin (pixel edits, a staff with longer reach, a Birdarang in place
+of the Batarang). Also open: the undecoded scene slots (collision, sections, enemies).
 
 ## Tools / quirks
 
