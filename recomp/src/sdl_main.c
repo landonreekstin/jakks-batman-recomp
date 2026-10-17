@@ -12,7 +12,8 @@
  *       - / = (or keypad - / +) = volume down/up, M = mute.
  * The 24C04 save EEPROM is kept in --save (default batman.sav next to the ROM). States go
  * to <save file minus .sav>.st<slot>, screenshots to <save file minus .sav>-NNNN.png.
- * The volume (--volume 0-100, default 100) is remembered in <save file minus .sav>.cfg.
+ * The volume (--volume 0-100, default 100) and the filter are remembered in
+ * <save file minus .sav>.cfg.
  * It only scales what goes to the speakers; the emulated sound is unchanged.
  *
  * --record writes the controller state as an input script (tests/inputs format), so
@@ -50,6 +51,7 @@ static int audio_len;
 static int audio_mute; /* fast forward: generate but drop */
 static int volume = 100, muted; /* percent; the gain is (volume/100)^2, closer to how loudness is heard */
 static int gain = 256;          /* 8.8 fixed point */
+static int saved_filter = -1;   /* from the config file */
 
 static void set_gain(void)
 {
@@ -168,14 +170,18 @@ static void load_config(const char *path)
     int v;
     while (fgets(line, sizeof(line), f))
         if (sscanf(line, "volume %d", &v) == 1 && v >= 0 && v <= 100) volume = v;
+        else {
+            char name[32];
+            if (sscanf(line, "filter %31s", name) == 1) saved_filter = crt_mode_parse(name);
+        }
     fclose(f);
 }
 
-static void save_config(const char *path)
+static void save_config(const char *path, int filter)
 {
     FILE *f = fopen(path, "w");
     if (!f) return;
-    fprintf(f, "volume %d\n", volume);
+    fprintf(f, "volume %d\nfilter %s\n", volume, crt_mode_name(filter));
     fclose(f);
 }
 
@@ -194,7 +200,7 @@ int main(int argc, char **argv)
 {
     const char *rom_path = NULL;
     char save_path[1024] = "";
-    int scale = 3, filter = CRT_NONE, volume_arg = -1;
+    int scale = 3, filter = -1, volume_arg = -1;
     long max_frames = -1;
     const char *record_path = NULL, *mod_list = NULL, *mods_dir = "mods";
     for (int i = 1; i < argc; i++) {
@@ -245,7 +251,8 @@ int main(int argc, char **argv)
     load_config(cfg_path);
     if (volume_arg >= 0) volume = volume_arg;
     set_gain();
-    const int volume_at_start = volume;
+    if (filter < 0) filter = saved_filter >= 0 ? saved_filter : CRT_NONE;
+    const int volume_at_start = volume, filter_at_start = filter;
 
     uint8_t file_sha[32];
     uint16_t *rom = rom_load(rom_path, file_sha);
@@ -420,7 +427,7 @@ int main(int argc, char **argv)
     save_eeprom(&m, save_path);
     if (rec) stop_recording(&rec, record_path, m.frame);
     if (pad) SDL_GameControllerClose(pad);
-    if (volume != volume_at_start) save_config(cfg_path);
+    if (volume != volume_at_start || filter != filter_at_start) save_config(cfg_path, filter);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);

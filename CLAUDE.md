@@ -83,8 +83,8 @@ Save states: F5 save, F8 load, F6/F7 slot 0-9 (files `target/batman.st<N>`), hol
 rewind (up to 60 s). States only load into the same build and ROM image (SHA-256 checked).
 Hold Tab to fast-forward (4x). F9 / Shift+F9 cycle the CRT filter (`--filter crt` at start),
 F11 toggles fullscreen, F12 saves a screenshot of the filtered image to `target/batman-NNNN.png`.
-`-` / `=` (or keypad −/+) change the volume in 10% steps and M mutes. The volume is remembered in
-`target/batman.cfg`, and `--volume 0-100` sets it at start. It only scales the output, so the
+`-` / `=` (or keypad −/+) change the volume in 10% steps and M mutes. The volume and the CRT filter are
+remembered in `target/batman.cfg`, and `--volume 0-100` sets it at start. It only scales the output, so the
 emulation is unchanged.
 `batman-rt --filter <mode>` applies a filter to `--snap` PNGs.
 
