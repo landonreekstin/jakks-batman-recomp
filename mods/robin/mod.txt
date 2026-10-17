@@ -1,6 +1,0 @@
-# Robin, step 1: Batman's sprite palette (bank 14, ROM 0x051870) recoloured.
-# The colours are 0 transparent, 1-4 cape (blue -> yellow), 5-9 suit (grey -> red), 10-14 belt and
-# skin (kept), 15 black. The game loads the palette at level start and at each respawn.
-name robin
-rom  4ec5438d16e222cc624820f45579071b8f8a4e91c65ae76e5425565509271766
-words 051871 7f86 72e3 5a22 3941 7d48 68c5 5063 3842 2021

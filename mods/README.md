@@ -23,6 +23,7 @@ Addresses are µ'nSP word addresses (segment << 16 | offset). The ROM file's byt
 | `words <addr> <w> ...` | ROM words ← the values |
 | `patch <addr> <file>` | ROM words ← a file of little-endian words |
 | `poke <addr> <value> [always]` | RAM (< 0x2800) ← value after reset, or at every vblank |
+| `generate.py` (file) | if present, `make -C recomp` writes `mod.txt` from it and the ROM (for mods derived from the original art, which stay out of git) |
 | `plugin <file.so>` | native C plugin, built from `plugin.c` by `make -C recomp` (API: `recomp/src/mod_api.h`) |
 
 The ROM space runs from 0x000000 to 0x3FFFFF. The upper half starts as a copy of the
@@ -50,9 +51,11 @@ MODS=example-text INPUT=tests/inputs/level1-start.txt SNAPS=1500 tests/check.sh 
 - `example-level`: an edited Street Party layout. In the opening section the blue building is
   replaced by a stretch from further down the street (made with `tools/level.py`; see below).
   Checked against MAME over the first 6100 vblanks of `tests/inputs/session2.txt`.
-- `robin`: work in progress. For now, Batman's sprite palette recoloured to Robin's (yellow cape,
-  red suit). Checked against MAME. `notes/sprites.md` has the sprite format; `tools/sprites.py`
-  draws every frame (`frames`) and exports/imports the tiles for pixel editing (`export`, `import`).
+- `robin`: work in progress. Robin's colours and look: black hair (from the cowl), a red tunic,
+  green legs and a yellow cape. `generate.py` makes `mod.txt` from the ROM (`make -C recomp` runs
+  it). The output holds edited copies of the original art, so it is gitignored. Checked against MAME.
+  `notes/sprites.md` has the sprite format; `tools/sprites.py` draws every frame (`frames`) and
+  exports/imports the tiles for pixel editing (`export`, `import`).
 - `example-lagmeter`: a plugin that hooks `wait_vblank` (0x005CDE) and counts lag frames on screen.
 - `tests/mods/retf-identity`: a test plugin. It replaces a RETF with `api->retf`, and the
   game must still match MAME exactly.

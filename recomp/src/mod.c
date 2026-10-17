@@ -174,10 +174,15 @@ static int load_manifest(int mod, patch_ctx_t *pc, const uint8_t rom_sha[32], co
             }
             have_rom = 1;
         } else if (!strcmp(key, "words") && nt >= 2 && parse_num(tok[0], &addr)) {
-            for (int i = 1; i < nt && ok; i++) {
-                if (!parse_num(tok[i], &val) || val > 0xffff) { fprintf(stderr, "%s:%d: bad word %s\n", path, lineno, tok[i]); ok = 0; }
-                else ok = put_word(pc, mod, addr + i - 1, (uint16_t)val);
-            }
+            /* any number of words: walk `rest` itself, since tok[] keeps only the first 8 */
+            char tmp[4096], *t = tmp, *w;
+            snprintf(tmp, sizeof(tmp), "%s", rest);
+            int i = -1;
+            while (ok && (w = strsep(&t, " \t")))
+                if (*w && i++ >= 0) {
+                    if (!parse_num(w, &val) || val > 0xffff) { fprintf(stderr, "%s:%d: bad word %s\n", path, lineno, w); ok = 0; }
+                    else ok = put_word(pc, mod, addr + (uint32_t)i - 1, (uint16_t)val);
+                }
         } else if (!strcmp(key, "text") && nt >= 2 && parse_num(tok[0], &addr)) {
             char *q0 = strchr(rest, '"'), *q1 = q0 ? strrchr(q0 + 1, '"') : NULL;
             if (!q1) { fprintf(stderr, "%s:%d: text needs a quoted string\n", path, lineno); ok = 0; }

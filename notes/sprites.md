@@ -33,8 +33,16 @@ draws all 183 frames correctly assembled.
 
 ## Mods
 
-- `mods/robin` recolours the palette: the cape becomes yellow and the suit red. MAME running the
-  baked ROM matches the native run over 6100 vblanks of `session2` (3 snapshots identical).
+- `mods/robin` (`generate.py`) gives Robin's look. The rules are applied per assembled frame, and
+  shared tiles take the majority result:
+  - cowl pixels next to the face become black hair (the ears become spikes);
+  - suit pixels below the belt become green (where no belt shows, below 45% of the body height);
+  - the barely used colours 1 and 5 become the greens.
+
+  350 tiles change. MAME running the baked ROM matches the native run over 6100 vblanks of
+  `session2` (3 snapshots identical).
+- Loader bug found on the way: `words` lines in `mod.txt` only applied their first 7 values (the
+  tokenizer kept 8 tokens). They now take any number.
 - `sprites.py export` writes the tiles as an indexed PNG in the character's palette.
   `sprites.py import` turns an edited sheet back into `words` lines, covering only the changed
   tiles.
