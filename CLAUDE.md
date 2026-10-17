@@ -111,8 +111,7 @@ scenes word for word, and every on-screen tile column in both levels of `session
 decoded maps. `batman-rt --watch out.txt w:LO-HI,r:LO-HI,from:N,to:N` logs CPU writes and data reads
 with their PC, for tracing data back to code. `mods/example-level` (an edited
 Street Party, made with `level.py paste`/`diff`) matches MAME running the baked ROM. The player's sprite
-frames are decoded (`notes/sprites.md`, `tools/sprites.py`), and `mods/robin` (so far a palette
-swap) matches MAME. `mods/robin` turns Batman into Robin, rebuilt from the
+frames are decoded (`notes/sprites.md`, `tools/sprites.py`). `mods/robin` turns Batman into Robin, rebuilt from the
 staff fighter's frames (`generate.py`), with its staff attacks, plus a faster, longer Birdarang. It is
 all data and matches MAME. The sprite bank, animation table and melee/Batarang code are in
 `notes/sprites.md`. Also open: the undecoded scene slots (collision, sections, enemies).
