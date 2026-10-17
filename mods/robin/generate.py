@@ -11,6 +11,8 @@ then set to the result most of its uses agree on, because frames share tiles.
     black hair with dark-brown highlights. The cowl's ears become spikes of hair.
   - legs: suit pixels below the belt become green. Where no belt shows, the waist is taken as
     45% of the way up the body.
+  - staff reach: B attacks in melee up to 40 + REACH px away instead of 40, and every attack box (frame box types other than 1/2, the body) that reaches forward
+    gets REACH more pixels at its far edge, and its hit spark moves with it (notes/sprites.md).
   - palette: colours 1 and 5 were barely used (38 and 48 pixels), so they become the two greens.
     Their old pixels move to the neighbouring shade."""
 import os
@@ -25,6 +27,11 @@ SUIT = {5, 6, 7, 8, 9}
 BELT = 10
 SKIN = {11, 12, 13}
 GREEN_LIGHT, GREEN_DARK = 1, 5
+REACH = 20  # px added to forward attack boxes: Robin's staff
+# FUN_0dada3 picks the enemy a B press attacks in melee: the nearest within 40 px across and
+# 24 px in depth; with none, B throws the Batarang. Its `cmp r3, 0x28` (0x4668 at 0x0DADD5) holds
+# the 40 in a 6-bit immediate, so the staff's range is 40 + REACH <= 63.
+MELEE_RANGE_CMP = 0x0DADD5
 
 
 def c(r, g, b):
@@ -68,6 +75,42 @@ def recolour(frame_pixels):
     return out
 
 
+def reach_words(rom):
+    """`words` lines lengthening the forward attack boxes (box = x0, y0, x1, y1, type)"""
+    out = []
+    for f in range(sprites.NFRAMES):
+        a = sprites.BANK + rom[sprites.FRAME_LIST + f]
+        k = rom[a + 3]
+        tail = a + 4 + k  # effect id, spark x, spark y
+        moved = False
+        for b in range(a + 4, a + 4 + k, 5):
+            x1, typ = sprites.s16(rom[b + 2]), rom[b + 4]
+            if typ not in (1, 2) and x1 > 0:
+                out.append(f"words {b + 2:06x} {(x1 + REACH) & 0xFFFF:04x}   # frame {f} attack box x1")
+                moved = True
+        if moved and sprites.s16(rom[tail + 1]) > 0:
+            out.append(f"words {tail + 1:06x} {(sprites.s16(rom[tail + 1]) + REACH) & 0xFFFF:04x}   # frame {f} hit spark x")
+    return out
+
+
+STAFF_ADDR = 0x3F0000  # tiles 0xFC00 (middle) and 0xFC01 (end), in the ROM's free upper half (plugin.c)
+
+
+def staff_tiles():
+    """two 16x16 tiles of a horizontal staff, tip to the right: outline 15, wood 12/13/14,
+    a yellow (10) cap on the end tile"""
+    bar = {6: 15, 7: 12, 8: 13, 9: 14, 10: 15}
+    mid = [[bar.get(y, 0) for x in range(16)] for y in range(16)]
+    end = [row[:] for row in mid]
+    for y in range(6, 11):
+        for x in range(11, 16):
+            end[y][x] = 0
+        for x in range(11, 14):
+            end[y][x] = 15 if y in (6, 10) else 10
+        end[y][14] = 15 if 7 <= y <= 9 else 0
+    return mid, end
+
+
 def main():
     rom = sprites.load_rom(sys.argv[1])
     votes = defaultdict(Counter)  # (tile, tx, ty) -> Counter of new colours
@@ -90,6 +133,14 @@ def main():
     print("name robin")
     print(f"rom  {sprites.SHA}")
     print("words 051871 " + " ".join(f"{PALETTE[i]:04x}" for i in range(1, 10)))
+    print("\n".join(reach_words(rom)))
+    for i, t in enumerate(staff_tiles()):
+        words = sprites.pixels_to_words(t)
+        for k in range(0, 64, 16):
+            print(f"words {STAFF_ADDR + 64 * i + k:06x} " + " ".join(f"{w:04x}" for w in words[k:k + 16]))
+    print("plugin plugin.so   # draws the staff (plugin.c)")
+    assert rom[MELEE_RANGE_CMP] == 0x4668 and 40 + REACH <= 63
+    print(f"words {MELEE_RANGE_CMP:06x} {0x4640 | (40 + REACH):04x}   # melee range 40 -> {40 + REACH} px")
     changed = 0
     for t in sprites.used_tiles(rom):
         px = sprites.tile_pixels(rom, t)

@@ -47,6 +47,34 @@ draws all 183 frames correctly assembled.
   `sprites.py import` turns an edited sheet back into `words` lines, covering only the changed
   tiles.
 
+## Melee (found for Robin's staff)
+
+- RAM 0x0184 is the player's current frame index.
+- **The box format, confirmed.** In a hit frame the game reads the boxes as x0, x1, y0, y1, type,
+  then the effect words. The types are:
+  - 1 and 2: body;
+  - 3: punch;
+  - 4: kick;
+  - 20 (0x14): hero attack.
+
+  Attack frames end with (effect id, spark x, spark y).
+- **Melee or Batarang.** B attacks in melee only if `FUN_0dada3` finds an enemy within 40 px across
+  (`cmp r3, 0x28` at 0x0DADD5, a 6-bit immediate) and 24 px in depth. Otherwise B throws the
+  Batarang.
+
+  Measured with the first enemy pinned at distance D (`poke 0275/0288 always`): Batman punches up
+  to D = 38 and throws from 42.
+- **Damage.** `FUN_0070d9` applies a pending hit (object +0x1B: type in the low nibble) to the
+  target. It is 2 for a melee hit, 1 for the Batarang, and more for some hero attacks.
+- **Enemy slots** are 76 words starting at 0x026B: +0x0A X (copy at +0x1D), +0x0B Y, +0x15
+  health (4 for the first thugs).
+- **`mods/robin`'s staff:**
+  - the range check goes from 40 to 60 px, and the forward attack boxes and sparks move 20 px
+    further out. Robin then hits for 2 out to D = 62;
+  - `plugin.c` draws the staff as 2 extra sprites, because the shared sprite bank fills its 64K
+    window and the frames can't grow;
+  - the staff tiles are in the ROM's upper half, so the staff only shows in our runtime.
+
 ## Open
 
 - The bank header's other tables: animations, which frame sequences and timings make up each move.
