@@ -45,6 +45,8 @@ MODS=example-text INPUT=tests/inputs/level1-start.txt SNAPS=1500 tests/check.sh 
 ## Examples
 
 - `example-text`: renames "New Game" on the title menu. Checked against MAME.
+- `example-cheat`: infinite health in the brawler levels (`poke 01e9 0020 always`; see
+  `notes/ram-map.md`).
 - `example-lagmeter`: a plugin that hooks `wait_vblank` (0x005CDE) and counts lag frames on screen.
 - `tests/mods/retf-identity`: a test plugin. It replaces a RETF with `api->retf`, and the
   game must still match MAME exactly.

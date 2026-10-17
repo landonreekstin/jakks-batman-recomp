@@ -96,7 +96,9 @@ See `mods/README.md`. Run `batman`/`batman-rt` with `--mods a,b`; the SDL build 
 file baked with `batman-rt --bake`. `batman-rt --romcov map.bin` (with `BATMAN_RENDER=1`) tags every ROM word by
 who reads it; `tools/romcov.py` summarises and draws it. Findings are in `notes/rom-usage.md`:
 so far nothing above word 0x100000 is ever read, so that space looks free for new content.
-Next: more play sessions, then graphics, RAM map and level format.
+Graphics are decoded (`notes/graphics.md`, `tools/gfx.py`, which rebuilds screens
+pixel-identically from `batman-rt --vdump` dumps). Game variables are in `notes/ram-map.md`
+(`tools/ramsearch.py`): level id, health, special meter, player X, camera. Next: the level format.
 
 ## Tools / quirks
 
