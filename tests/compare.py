@@ -52,14 +52,14 @@ def cmp_trace(ref, ours):
 
 
 def frames(path):
+    """(label, cycles, raw RAM + video RAM bytes) per record, in file order (ascending labels)"""
     with open(path, "rb") as f:
         while True:
             blob = f.read(FRAME_BYTES)
             if len(blob) < FRAME_BYTES:
                 return
             fr, cyc = struct.unpack_from("<IQ", blob)
-            words = struct.unpack_from(f"<{RAM_WORDS + VRAM_WORDS}H", blob, 12)
-            yield fr, cyc, words
+            yield fr, cyc, blob[12:]
 
 
 def addr_of(i):
@@ -67,19 +67,27 @@ def addr_of(i):
 
 
 def cmp_frames(ref, ours, show=8):
-    bad = 0
-    n = 0
-    mine = {fr: (cyc, words) for fr, cyc, words in frames(ours)}
-    for fa, ca, wa in frames(ref):
-        if fa not in mine:
+    """Streams both dumps and joins them on the frame label (both are in ascending order),
+    so dumps of any length compare in constant memory. Frames only one side has are skipped."""
+    bad = n = 0
+    mine = frames(ours)
+    cur = next(mine, None)
+    for fa, _, wa in frames(ref):
+        while cur is not None and cur[0] < fa:
+            cur = next(mine, None)
+        if cur is None:
+            break
+        if cur[0] != fa:
             continue
-        cb, wb = mine[fa]
+        wb = cur[2]
         n += 1
-        diff = [i for i in range(len(wa)) if wa[i] != wb[i]]
-        if diff:
+        if wa != wb:
             bad += 1
             if bad <= show:
-                desc = ", ".join(f"{addr_of(i):04X}:{wa[i]:04X}/{wb[i]:04X}" for i in diff[:10])
+                ua = struct.unpack(f"<{RAM_WORDS + VRAM_WORDS}H", wa)
+                ub = struct.unpack(f"<{RAM_WORDS + VRAM_WORDS}H", wb)
+                diff = [i for i in range(len(ua)) if ua[i] != ub[i]]
+                desc = ", ".join(f"{addr_of(i):04X}:{ua[i]:04X}/{ub[i]:04X}" for i in diff[:10])
                 print(f"frame {fa}: {len(diff)} words differ (mame/ours) {desc}{' ...' if len(diff) > 10 else ''}")
     print(f"frames: {n - bad}/{n} identical")
     return 1 if bad else 0

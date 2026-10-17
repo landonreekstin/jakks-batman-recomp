@@ -49,8 +49,11 @@ PPU/SPU work.
   - `example-text`, baked into a ROM, matches MAME;
   - `tests/mods/retf-identity` replaces 4944 RETFs through a hook and still matches MAME;
   - unmodded runs are unchanged.
-- Not done: static recompiler (code is still interpreted). Only 5000 frames (~83 s) of play
-  have been compared against MAME so far.
+- **A real play session matches MAME**: `tests/inputs/session1.txt`, recorded by the user with
+  `--record`. It covers 68,520 vblanks (19 min): the Street Party brawler level, then the
+  Fast Lane Batcycle level to Level Completed. All frames are identical, all 20,586,666 peripheral writes and
+  541,817 reads match, and 14/14 snapshots are pixel-identical. Each side of the capture is about 1.7 GB.
+- Not done: static recompiler (code is still interpreted).
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.
 
 ## How to check
