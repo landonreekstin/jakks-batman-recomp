@@ -8,3 +8,5 @@ recomp/build/
 .direnv/
 mods/*/*.so
 tests/mods/*/*.so
+__pycache__/
+tests/inputs/*.sav
