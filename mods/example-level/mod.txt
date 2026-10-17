@@ -1,0 +1,17 @@
+name example-level
+rom  4ec5438d16e222cc624820f45579071b8f8a4e91c65ae76e5425565509271766
+# Edited Street Party layout: in the opening section (map blocks 0-14, which loop while the first
+# wave is fought) the blue building, blocks 8-14, is replaced by blocks 52-58 from further down the
+# street: a grey wall, a door, a window and a wrecked car. Only the background map changes;
+# floor/collision data is separate and untouched. Made with:
+#   tools/level.py extract target/batman.bin 15 s15.json
+#   tools/level.py paste s15.json 2 52 8 7 s15e.json
+#   tools/level.py diff target/batman.bin s15e.json example-level > mods/example-level/mod.txt
+words 0c50b9 0f0f 0f0f 0f0f 0f0f
+words 0c514f 0f0f 0f0f 0f0f 0f0f
+words 0c51e5 0f0f 0f0f 0f0f 0f0f
+words 0c527b 3939 3939 3939 3539
+words 0c5311 5352 5c5b 5353 4a53
+words 0c53a7 8779 8988 7b7a 717c
+words 0c543d 9598 9796 9c9b 999d
+words 0c54d3 9fa2 a1a0

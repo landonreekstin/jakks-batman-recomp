@@ -106,8 +106,9 @@ The background map format is decoded (`notes/level-format.md`). `tools/level.py`
 scenes, renders whole maps to PNG, and extracts/builds them as JSON. Rebuilding reproduces all 24
 scenes word for word, and every on-screen tile column in both levels of `session1` matches the
 decoded maps. `batman-rt --watch out.txt w:LO-HI,r:LO-HI,from:N,to:N` logs CPU writes and data reads
-with their PC, for tracing data back to code. Next: an edited Street Party as a mod, and the
-undecoded scene slots (collision, sections, enemies).
+with their PC, for tracing data back to code. `mods/example-level` (an edited
+Street Party, made with `level.py paste`/`diff`) matches MAME running the baked ROM. Next: the
+undecoded scene slots (collision, sections, enemies), then a new section or level.
 
 ## Tools / quirks
 

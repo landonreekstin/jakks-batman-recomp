@@ -47,6 +47,25 @@ MODS=example-text INPUT=tests/inputs/level1-start.txt SNAPS=1500 tests/check.sh 
 - `example-text`: renames "New Game" on the title menu. Checked against MAME.
 - `example-cheat`: infinite health and lives in the brawler levels (`poke 01e9 0020 always`,
   `poke 2099 0004 always`; see `notes/ram-map.md`).
+- `example-level`: an edited Street Party layout. In the opening section the blue building is
+  replaced by a stretch from further down the street (made with `tools/level.py`; see below).
+  Checked against MAME over the first 6100 vblanks of `tests/inputs/session2.txt`.
 - `example-lagmeter`: a plugin that hooks `wait_vblank` (0x005CDE) and counts lag frames on screen.
 - `tests/mods/retf-identity`: a test plugin. It replaces a RETF with `api->retf`, and the
   game must still match MAME exactly.
+
+## Editing level layouts
+
+`tools/level.py` (format in `notes/level-format.md`) turns a scene's maps into JSON and back:
+
+```
+tools/level.py list    target/batman.bin                       # the 24 scenes
+tools/level.py render  target/batman.bin 15 2 street.png       # whole map as an image
+tools/level.py extract target/batman.bin 15 s15.json            # edit the "grid" rows (block bytes)
+tools/level.py paste   s15.json 2 52 8 7 s15e.json              # or copy block columns
+tools/level.py diff    target/batman.bin s15e.json my-mod > mods/my-mod/mod.txt
+```
+
+`diff` writes only the changed words, so a mod never carries the original ROM data. Keep the
+extracted JSON out of git, like `target/`. Street Party is scene 15 and Fast Lane scene 16. A block
+byte indexes the scene's block table, so any block already in that table can be placed anywhere.

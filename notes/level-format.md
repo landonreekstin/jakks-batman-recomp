@@ -80,6 +80,13 @@ then          height rows of width/2 words, two block bytes per word (low byte =
   - Street Party has 12 sections (S[8] = 0..0x0B). Fast Lane loops the same way.
   - Where the section list comes from in ROM is still open. It is probably one of slots 4–11.
 
+## First edit: mods/example-level
+
+It copies Street Party's block columns 52–58 over 8–14, in the opening section. It is 30 words of
+map bytes. MAME, running the baked ROM, matches the native run over the first 6100 vblanks of
+`session2` (frames and 4 snapshots identical), and the snapshots show the new street. The floor is
+unchanged: the wrecked car is decoration, and Batman walks in front of it.
+
 ## Open
 
 - Slots 4–11: collision or floor, the section list, enemy spawns and triggers.

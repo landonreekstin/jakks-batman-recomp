@@ -8,10 +8,16 @@
     level.py check  <rom> <scene> <page> <vNNNNN.bin> ...
                                                    compares the decoded map with the tilemap and
                                                    attribute RAM in video-state dumps, tile by tile
-    level.py extract <rom> <scene> <out.json>      both maps as block grids, their block tables and
-                                                   the scene's other data blocks (raw words)
+    level.py extract <rom> <scene> <out.json>      both maps as block grids (hex bytes, one row per
+                                                   string), their block tables and the scene's
+                                                   other data blocks (raw words, hex)
     level.py build  <rom> <in.json> <out.bin>      re-encodes a scene's data block from JSON
                                                    (extract + build reproduces the ROM words exactly)
+    level.py paste  <in.json> <page> <src-col> <dst-col> <count> <out.json>
+                                                   copies <count> block columns of a map (all rows)
+    level.py diff   <rom> <in.json> [name]         prints a mod.txt with `words` lines for the words
+                                                   that differ from the ROM (the data block must keep
+                                                   its size)
 
 Scene table at 0x0D869E: a count, then 24-word records of 12 far pointers (low word, segment):
   0 tileset graphics (tile number base = address / 16)   1 background palette (banks 0-7)
@@ -225,19 +231,28 @@ def cmd_extract(rom, scene, out):
             m = Map(rom, a, 0)
             if a + m.words != end:
                 j["blocks"].append({"slot": SLOTS[i] + "_tail", "addr": a + m.words,
-                                    "words": list(rom[a + m.words:end])})
-            j["maps"][SLOTS[i]] = {"width": m.w, "height": m.h, "table": m.table,
+                                    "words": hexrows(rom[a + m.words:end])})
+            j["maps"][SLOTS[i]] = {"width": m.w, "height": m.h, "table": hexrows(m.table),
                                    "grid": [" ".join(f"{b:02x}" for b in row) for row in m.grid]}
         else:
-            j["blocks"].append({"slot": SLOTS[i], "addr": a, "words": list(rom[a:end])})
+            j["blocks"].append({"slot": SLOTS[i], "addr": a, "words": hexrows(rom[a:end])})
     j["start"], j["end"] = start, nxt
     with open(out, "w") as f:
         json.dump(j, f, indent=1)
     print(f"{out}: scene {scene}, data {start:06X}-{nxt - 1:06X} ({nxt - start} words)")
 
 
+def hexrows(words, per=16):
+    return [" ".join(f"{w:04x}" for w in words[k:k + per]) for k in range(0, len(words), per)]
+
+
+def unhex(rows):
+    return [int(w, 16) for r in rows for w in r.split()]
+
+
 def encode_map(m):
-    words = [m["width"], m["height"], len(m["table"])] + m["table"]
+    table = unhex(m["table"])
+    words = [m["width"], m["height"], len(table)] + table
     for row in m["grid"]:
         b = [int(x, 16) for x in row.split()]
         if len(b) != m["width"]:
@@ -248,19 +263,7 @@ def encode_map(m):
 
 def cmd_build(rom, path, out):
     j = json.load(open(path))
-    data = {}
-    for slot, a in j["pointers"].items():
-        if slot in j["maps"]:
-            data[a] = encode_map(j["maps"][slot])
-    for b in j["blocks"]:
-        data[b["addr"]] = b["words"]
-    words = []
-    pos = j["start"]
-    for a in sorted(data):
-        if a != pos:
-            sys.exit(f"gap or overlap at {a:06X} (expected {pos:06X})")
-        words += data[a]
-        pos += len(data[a])
+    words = encode_scene(j)
     with open(out, "wb") as f:
         f.write(struct.pack(f"<{len(words)}H", *words))
     same = list(rom[j["start"]:j["start"] + len(words)]) == words
@@ -268,11 +271,65 @@ def cmd_build(rom, path, out):
           f"{'identical to the ROM' if same else 'differs from the ROM'}")
 
 
+def encode_scene(j):
+    data = {}
+    for slot, a in j["pointers"].items():
+        if slot in j["maps"]:
+            data[a] = encode_map(j["maps"][slot])
+    for b in j["blocks"]:
+        data[b["addr"]] = unhex(b["words"])
+    words = []
+    pos = j["start"]
+    for a in sorted(data):
+        if a != pos:
+            sys.exit(f"gap or overlap at {a:06X} (expected {pos:06X})")
+        words += data[a]
+        pos += len(data[a])
+    return words
+
+
+def cmd_paste(path, page, src, dst, count, out):
+    j = json.load(open(path))
+    m = j["maps"][f"page{page}"]
+    grid = [r.split() for r in m["grid"]]
+    for row in grid:
+        row[dst:dst + count] = row[src:src + count]
+    m["grid"] = [" ".join(r) for r in grid]
+    with open(out, "w") as f:
+        json.dump(j, f, indent=1)
+    print(f"{out}: page {page} block columns {src}-{src + count - 1} copied to {dst}-{dst + count - 1}")
+
+
+def cmd_diff(rom, path, name=None):
+    j = json.load(open(path))
+    words = encode_scene(j)
+    if j["start"] + len(words) != j["end"]:
+        sys.exit(f"the scene's data changed size ({len(words)} words, was {j['end'] - j['start']}); "
+                 "moving it needs the pointers patched too")
+    sha = __import__("hashlib").sha256(open(sys.argv[2], "rb").read()).hexdigest()
+    print(f"name {name or 'scene ' + str(j['scene']) + ' edit'}")
+    print(f"rom  {sha}")
+    print(f"# made with tools/level.py diff from an edited extract of scene {j['scene']}")
+    k = 0
+    while k < len(words):
+        if words[k] == rom[j["start"] + k]:
+            k += 1
+            continue
+        e = k
+        while e < len(words) and e - k < 16 and words[e] != rom[j["start"] + e]:
+            e += 1
+        print(f"words {j['start'] + k:06x} " + " ".join(f"{w:04x}" for w in words[k:e]))
+        k = e
+
+
 def main():
     a = sys.argv[1:]
     if len(a) < 2:
         print(__doc__)
         return 2
+    if a[0] == "paste":
+        cmd_paste(a[1], int(a[2]), int(a[3]), int(a[4]), int(a[5]), a[6])
+        return 0
     rom = load_rom(a[1])
     if a[0] == "list":
         cmd_list(rom)
@@ -284,6 +341,8 @@ def main():
         cmd_extract(rom, int(a[2]), a[3])
     elif a[0] == "build":
         cmd_build(rom, a[2], a[3])
+    elif a[0] == "diff":
+        cmd_diff(rom, a[2], a[3] if len(a) > 3 else None)
     else:
         print(__doc__)
         return 2
