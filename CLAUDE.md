@@ -112,8 +112,9 @@ decoded maps. `batman-rt --watch out.txt w:LO-HI,r:LO-HI,from:N,to:N` logs CPU w
 with their PC, for tracing data back to code. `mods/example-level` (an edited
 Street Party, made with `level.py paste`/`diff`) matches MAME running the baked ROM. The player's sprite
 frames are decoded (`notes/sprites.md`, `tools/sprites.py`), and `mods/robin` (so far a palette
-swap) matches MAME. In progress: Robin (pixel edits, a staff with longer reach, a Birdarang in place
-of the Batarang). Also open: the undecoded scene slots (collision, sections, enemies).
+swap) matches MAME. `mods/robin` turns Batman into Robin: his look
+(`generate.py`), a staff (60 px melee range, longer attack boxes, drawn by `plugin.c`) and a faster,
+longer Birdarang. The melee and Batarang code is in `notes/sprites.md`. Also open: the undecoded scene slots (collision, sections, enemies).
 
 ## Tools / quirks
 

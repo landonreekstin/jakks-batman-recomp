@@ -53,7 +53,8 @@ MODS=example-text INPUT=tests/inputs/level1-start.txt SNAPS=1500 tests/check.sh 
   Checked against MAME over the first 6100 vblanks of `tests/inputs/session2.txt`.
 - `robin`: work in progress. Robin's look (black hair, red tunic, green legs, yellow cape) and a
   staff: B hits in melee from 60 px instead of 40, with longer attack boxes, and `plugin.c` draws
-  the staff. `generate.py` makes `mod.txt` from the ROM (`make -C recomp` runs it). The output holds
+  the staff. The Batarang becomes a red/yellow Birdarang that flies faster (12 frames out instead
+  of 20) and further (240 px instead of 180). `generate.py` makes `mod.txt` from the ROM (`make -C recomp` runs it). The output holds
   edited copies of the original art, so it is gitignored. The staff (plugin, upper-half tiles) only
   works in our runtime. `notes/sprites.md` has the sprite and melee formats; `tools/sprites.py`
   draws every frame and exports/imports tiles.

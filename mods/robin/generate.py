@@ -13,6 +13,7 @@ then set to the result most of its uses agree on, because frames share tiles.
     45% of the way up the body.
   - staff reach: B attacks in melee up to 40 + REACH px away instead of 40, and every attack box (frame box types other than 1/2, the body) that reaches forward
     gets REACH more pixels at its far edge, and its hit spark moves with it (notes/sprites.md).
+  - Birdarang: the Batarang's spin frames recoloured red/yellow, thrown faster and further.
   - palette: colours 1 and 5 were barely used (38 and 48 pixels), so they become the two greens.
     Their old pixels move to the neighbouring shade."""
 import os
@@ -93,6 +94,17 @@ def reach_words(rom):
     return out
 
 
+# Birdarang (the Batarang, notes/sprites.md): FUN_065b64 throws it, FUN_065aa1 turns it back
+# on a hit. Each leg runs a phase from 0 to 1 at SPEED/60 per frame; SPEED is `r3 = 03` (0x9643)
+# in FUN_0657a7. The target is the thrower's X plus a per-direction offset (table at 0x5998,
+# 8 directions; straight ahead 0xB4 = 180 px) plus up to +-16 px at random.
+BIRD_SPEED_INSN = 0x0657AF
+BIRD_SPEED = 5            # 3 -> 5: 12 frames a leg instead of 20
+BIRD_RANGE = 0x5998
+BIRD_RANGE_SCALE = 4 / 3  # 180 -> 240 px straight ahead
+BIRD_TILES = range(0x522, 0x530)  # the 14 spin frames, sprite palette bank 13 (shared with the HUD)
+BIRD_COLOURS = {7: 11, 8: 12, 9: 14, 10: 15, 3: 13, 4: 14, 5: 15}  # blues/greys -> yellow/orange/reds
+
 STAFF_ADDR = 0x3F0000  # tiles 0xFC00 (middle) and 0xFC01 (end), in the ROM's free upper half (plugin.c)
 
 
@@ -139,6 +151,16 @@ def main():
         for k in range(0, 64, 16):
             print(f"words {STAFF_ADDR + 64 * i + k:06x} " + " ".join(f"{w:04x}" for w in words[k:k + 16]))
     print("plugin plugin.so   # draws the staff (plugin.c)")
+    assert rom[BIRD_SPEED_INSN] == 0x9643
+    print(f"words {BIRD_SPEED_INSN:06x} {0x9640 | BIRD_SPEED:04x}   # Birdarang speed 3 -> {BIRD_SPEED}")
+    rng = [sprites.s16(rom[BIRD_RANGE + d]) for d in range(8)]
+    print(f"words {BIRD_RANGE:06x} " + " ".join(f"{round(v * BIRD_RANGE_SCALE) & 0xFFFF:04x}" for v in rng)
+          + "   # Birdarang range per direction")
+    for t in BIRD_TILES:
+        px = [[BIRD_COLOURS.get(v, v) for v in row] for row in sprites.tile_pixels(rom, t)]
+        words = sprites.pixels_to_words(px)
+        for k in range(0, 64, 16):
+            print(f"words {t * 64 + k:06x} " + " ".join(f"{w:04x}" for w in words[k:k + 16]))
     assert rom[MELEE_RANGE_CMP] == 0x4668 and 40 + REACH <= 63
     print(f"words {MELEE_RANGE_CMP:06x} {0x4640 | (40 + REACH):04x}   # melee range 40 -> {40 + REACH} px")
     changed = 0

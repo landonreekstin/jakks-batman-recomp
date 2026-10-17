@@ -75,6 +75,25 @@ draws all 183 frames correctly assembled.
     window and the frames can't grow;
   - the staff tiles are in the ROM's upper half, so the staff only shows in our runtime.
 
+## Batarang (found for Robin's Birdarang)
+
+- **Object.** It is an object in the same 76-word slots (slot 2 in the test: X at 0x030D). Its
+  sprite is one 16×16 tile cycling through 14 spin frames, 0x0522–0x052F, in palette bank 13
+  (shared with the HUD).
+- **Motion.** `FUN_065b64` throws it:
+  - the target is the thrower's X plus a per-direction offset (8 directions, table at 0x5998;
+    0xB4 = 180 px straight ahead) plus up to ±16 px at random;
+  - other per-direction tables sit at 0x5988–0x59C7.
+
+  Each leg runs a 16.16 phase from 0 to 1, eased (`FUN_0dba85` adds the step each frame). The step
+  is SPEED/60, where SPEED is the immediate in `r3 = 03` at 0x0657AF (`FUN_0657a7`). That gives
+  20 frames a leg.
+- **Return.** `FUN_065aa1` turns it back on a hit, or at the end of the leg, towards the
+  thrower.
+- **Robin's Birdarang** (`mods/robin`): SPEED 5 (12 frames a leg), range ×4/3 (240 px), and the
+  spin frames recoloured red/yellow. Thrown at an enemy pinned 150 px away, it hits in 6 frames;
+  the Batarang tops out at about 129 px there and misses.
+
 ## Open
 
 - The bank header's other tables: animations, which frame sequences and timings make up each move.
