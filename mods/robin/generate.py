@@ -61,9 +61,9 @@ HEAD = [
     ".K.K.K.",
     "KKKKKK.",
     "KKKSSS.",
-    "KKMWMWK",
-    "KKdssSS",
-    ".KdsssK",
+    "KKMWMWM",
+    "KKdsssS",
+    ".Kdsss.",
     ".Kddss.",
     "..Kdsd.",
 ]
