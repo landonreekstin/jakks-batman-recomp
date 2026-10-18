@@ -26,6 +26,8 @@ all: $(OUT) build/batman $(PLUGINS) $(GENERATED)
 	@if [ -f $(ROM) ]; then python3 $< $(ROM) > $@.tmp && mv $@.tmp $@; \
 	else echo "note: $(ROM) missing, $@ not generated"; fi
 
+../mods/robin-p2/mod.txt: ../mods/robin/generate.py   # robin-p2 is robin's generator, run for P2
+
 $(OUT): $(CORE) src/main.c $(HDR)
 	mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(CORE) src/main.c $(LDLIBS)

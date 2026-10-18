@@ -135,7 +135,11 @@ draws all 183 frames correctly assembled.
     415);
   - the frame records go in Batman's record space (about 4100 of 4900 words);
   - the animation table keeps its slots, with attacks at 13 fps;
-  - the melee range is 60.
+  - the melee range is 60;
+  - Batman's frame 1 is his back (animation 9: walking through a door, searching, standing after a
+    door upwards). The fighter has no back view, so Robin's is drawn (`back_view`): hair from
+    behind, the narrow cape with two folds, the arms apart from the body, the staff upright in one
+    hand, outlined and lit from the right like Batman's. Its body boxes are Batman's frame 1's.
 
   Everything is data. MAME running the baked ROM matches the native run over 6100 vblanks of
   session2 (3 snapshots).

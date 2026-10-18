@@ -351,6 +351,77 @@ def cut(img, src_pieces):
     return pieces
 
 
+BACK_ANIM = 9   # Batman's frame 1: seen from behind (going through a door, searching)
+
+
+def back_view():
+    """Robin from behind, drawn (the staff fighter has no such frame): black hair, the narrow
+    yellow cape from the collar to the upper thigh, red sleeves, green gloves and legs, the staff
+    upright in his left hand. Lit from the right like Batman's back frame; outlined in black."""
+    body = {}
+    def span(y, x0, x1, v):
+        for x in range(x0, x1 + 1):
+            body[(x, y)] = v
+    # tunic and arms (each row: torso, then the arms as separate runs, for the shading)
+    for y in range(-40, -25):
+        w = 3 if y == -40 else 4 if y == -39 else 5
+        span(y, -w, w, RED)
+    for y in range(-39, -26):           # apart from the body, with an outline between
+        o = 6 if y == -39 else 7
+        span(y, -o - 1, -o, RED)
+        span(y, o, o + 1, RED)
+    for y in range(-26, -21):           # gloves
+        span(y, -9, -7, GRN)
+        span(y, 7, 9, GRN)
+    span(-25, -4, 4, YEL)               # belt
+    for y in range(-24, -19):           # trunks
+        span(y, -5, 5, GRN)
+    for y in range(-19, -1):            # legs, boots from -6 (the outline is the soles, at -1)
+        x0 = 5 if y < -12 or y > -7 else 4
+        span(y, -x0, -1, GRN if y < -6 else GRN_D)
+        span(y, 1, x0, GRN if y < -6 else GRN_D)
+    out = {}
+    for (x, y), v in body.items():      # each run: dark on the left, light on the right
+        l, r = (x - 1, y) not in body, (x + 1, y) not in body
+        if v == RED:
+            out[(x, y)] = RED_D if l else RED_L if r else RED
+        elif v == GRN:
+            out[(x, y)] = GRN_D if l else GRN_L if r else GRN
+        else:
+            out[(x, y)] = v
+    # the head: hair from behind, the ears, the nape
+    for y in range(-45, -41):
+        w = 2 if y == -45 else 3
+        for x in range(-w, w + 1):
+            out[(x, y)] = BLACK
+    for x in (-2, 0, 2):
+        out[(x, -46)] = BLACK
+    out[(-4, -43)], out[(4, -43)] = SKIN_D, SKIN
+    for x in range(-2, 3):
+        out[(x, -41)] = SKIN_D if x == -2 else SKIN_L if x == 2 else SKIN
+    # the cape: a collar, then close to the back down to the upper thigh, the hem in points,
+    # two folds
+    for x in range(-3, 4):
+        out[(x, -40)] = BRN_D
+    for y in range(-39, -19):
+        w = 4 if y < -32 else 5
+        for x in range(-w, w + 1):
+            if y == -20 and x % 2:
+                continue
+            out[(x, y)] = BRN_D if x == -w or (abs(x) == 2 and y > -35 and y < -20) else \
+                YEL_L if x == w or (x == 3 and y > -34) else YEL
+    # the staff, upright behind his left hand
+    for y in range(-44, -5):
+        tip = y < -42 or y > -8
+        out.setdefault((-10, y), YEL_L if tip else WOOD)
+        out.setdefault((-9, y), YEL if tip else BRN_D)
+    for (x, y) in list(out):            # black outline round the whole figure
+        for q in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if q not in out:
+                out[q] = -1
+    return {q: BLACK if v == -1 else v for q, v in out.items()}
+
+
 def resample(seq, n):
     return [seq[i * len(seq) // n] for i in range(n)]
 
@@ -394,9 +465,13 @@ def main(p2=False):
                 tail = mine["tail"]
         if a in HERO_ANIMS:
             attack = [b[:4] + (0x14,) for b in attack]
-        key = (lst, f, tuple(attack), tail, mine["flags"], mine["word2"])
+        back = a == BACK_ANIM
+        key = (lst, f, tuple(attack), tail, mine["flags"], mine["word2"], back)
         if key not in built:
-            img = robinize(compose(rom, src), CROUCH if (lst, f) == (THUG, 39) else CLASSES[lst])
+            if back:   # drawn: its body boxes are Batman's
+                img, src = back_view(), {**src, "pieces": [], "boxes": mine["boxes"]}
+            else:
+                img = robinize(compose(rom, src), CROUCH if (lst, f) == (THUG, 39) else CLASSES[lst])
             if (lst, f) == (THUG, 39):
                 draw_staff(img, *CROUCH_STAFF)
             pieces = []

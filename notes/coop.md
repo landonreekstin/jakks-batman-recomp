@@ -183,7 +183,6 @@ never runs. All of the state is in `spg_t.coop` and in save states.
 - **P1 dying while P2 is alive** still restarts both at the checkpoint; the plan was for P1 to
   respawn in place. P1 out of lives is Game Over even if P2 has lives.
 - **P2's HUD** shows Batman's lives heads.
-- **Robin has no back-turned pose** for searching and doors (his frames come from the staff fighter).
 - **P2 dies at once:** no knockdown animation, and no blinking on respawn.
 - **Robin's melee range and Birdarang:** these are code patches, so P2 has Batman's.
 - **Doors** are checked only at the first door of *Search for a Smile*. Rooms entered in other ways
