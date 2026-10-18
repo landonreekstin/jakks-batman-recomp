@@ -35,7 +35,8 @@ typedef void (*net_run_fn)(void *ctx, spg_t *m, int render, int audio);
 
 /* the host listens on port (TCP and UDP); NULL on failure (printed) */
 netplay_t *net_host(int port, const net_opts_t *o);
-/* the guest connects to addr:port and introduces itself (id: mods_content_id) */
+/* the guest starts connecting to addr:port (id: mods_content_id); net_wait_start goes on with it.
+ * Never NULL unless out of memory: a failure shows up there. */
 netplay_t *net_join(const char *addr, int port, const net_opts_t *o, const uint8_t id[32]);
 
 /* host, every frame until it returns 1: a guest has joined, and the game goes on from m's current
@@ -44,6 +45,12 @@ int net_accept(netplay_t *n, spg_t *m, const uint8_t id[32]);
 /* guest, every frame until it returns 1: the host's state is in m. -1: refused or gone
  * (net_status says why) */
 int net_wait_start(netplay_t *n, spg_t *m);
+/* guest: the host answered (so a failure after it is the host's refusal or its leaving) */
+int net_connected(const netplay_t *n);
+/* the latest event's text (why a connection failed or ended) */
+const char *net_reason(const netplay_t *n);
+/* guest: the host refused us (a different build, ROM or mod set): no use trying again */
+int net_refused(const netplay_t *n);
 
 /* one tick (1/60 s): sends and receives, rolls back where a prediction was wrong, and runs the
  * next frame unless it has to wait for the peer. local: this player's buttons (port A layout).

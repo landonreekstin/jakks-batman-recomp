@@ -112,7 +112,7 @@ midpoint, with a leash. Native only. Input scripts take an optional second mask 
 Robin, from wherever it is. Both need the same build, ROM and mods. Each player uses P1's keys or a
 controller. `--net-delay N` sets the input delay (2 frames). The status line at the bottom shows the
 ping and the last rollback. Rewind, state loads, fast forward and recording are off while connected.
-The guest's save file is left alone. `batman-rt --host/--join` does the same headless (for
+The guest's save file is left alone. The guest keeps retrying until the host is up (and after the host quits); the host listens again when player 2 leaves. `batman-rt --host/--join` does the same headless (for
 `tests/net.sh`).
 
 `--record tests/inputs/<name>.txt` writes the session as an input script, so real play

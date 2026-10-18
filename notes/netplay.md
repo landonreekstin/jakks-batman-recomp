@@ -28,6 +28,16 @@ Without rollback, every input would wait for the network round trip. Instead:
   skips a frame, at most once every 20 frames. Smoothing over about 10 frames is needed: without
   it, a 30 ms jitter made both sides skip about 7% of their frames.
 
+## Joining (the SDL front end)
+
+- **The guest keeps trying.** If nobody is hosting yet, or the VPN is off, it shows why and
+  tries again every 2 s. When the host quits, it goes back to waiting and joins the next game by
+  itself.
+- **It stops only when the host refuses it:** a different build, ROM or mod set. It shows the
+  reason.
+- **The host** plays on its own until player 2 connects. When player 2 leaves, it carries on and
+  listens again.
+
 ## Wire
 
 - **TCP**, on the port given (default 7845), carries three messages: HELLO (guest: protocol, state

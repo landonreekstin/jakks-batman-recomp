@@ -68,6 +68,10 @@ struct netplay {
     net_opts_t o;
     uint64_t t0;
     char status[160], why[128];
+    char peer_name[128];
+    uint8_t id[32];
+    int connecting, connected, refused;  /* guest: the TCP connect is under way / done and HELLO sent */
+    uint64_t connect_by;
     int news;                   /* why holds a message not yet taken by net_event */
     int gone;
 
@@ -472,6 +476,7 @@ static int tcp_poll(netplay_t *n, spg_t *m)
             if (!w.ok) {
                 w.why[sizeof(w.why) - 1] = 0;
                 say(n, "the host refused: %s", w.why);
+                n->refused = 1;
                 return -1;
             }
         }
@@ -669,68 +674,108 @@ netplay_t *net_join(const char *addr, int port, const net_opts_t *o, const uint8
     if (!n) return NULL;
     char ports[16];
     snprintf(ports, sizeof(ports), "%d", port);
-    struct addrinfo hints = { .ai_socktype = SOCK_STREAM }, *res = NULL, *ai;
+    snprintf(n->peer_name, sizeof(n->peer_name), "%s", addr);
+    memcpy(n->id, id, 32);
+    struct addrinfo hints = { .ai_socktype = SOCK_STREAM }, *res = NULL;
     const int e = getaddrinfo(addr, ports, &hints, &res);
     if (e) {
-        fprintf(stderr, "net: %s: %s\n", addr, gai_strerror(e));
-        net_close(n);
-        return NULL;
+        say(n, "can't find %s: %s", addr, gai_strerror(e));
+        return n;   /* net_wait_start reports it */
     }
-    for (ai = res; ai; ai = ai->ai_next) {
-        n->tcp = socket(ai->ai_family, SOCK_STREAM, 0);
-        if (n->tcp < 0) continue;
-        if (connect(n->tcp, ai->ai_addr, ai->ai_addrlen) == 0) break;
-        close(n->tcp);
-        n->tcp = -1;
-    }
-    if (!ai) {
-        fprintf(stderr, "net: can't connect to %s port %d: %s\n", addr, port, strerror(errno));
-        freeaddrinfo(res);
-        net_close(n);
-        return NULL;
-    }
-    memcpy(&n->peer, ai->ai_addr, ai->ai_addrlen);
-    n->peer_len = ai->ai_addrlen;
-    n->udp = socket(ai->ai_family, SOCK_DGRAM, 0);
+    memcpy(&n->peer, res->ai_addr, res->ai_addrlen);
+    n->peer_len = res->ai_addrlen;
     freeaddrinfo(res);
+    n->tcp = socket(n->peer.ss_family, SOCK_STREAM, 0);
+    n->udp = socket(n->peer.ss_family, SOCK_DGRAM, 0);
+    if (n->tcp < 0 || n->udp < 0) {
+        say(n, "no sockets: %s", strerror(errno));
+        return n;
+    }
+    set_nonblock(n->tcp);
+    set_nonblock(n->udp);
+    if (connect(n->tcp, (struct sockaddr *)&n->peer, n->peer_len) < 0 && errno != EINPROGRESS) {
+        say(n, "can't reach %s: %s", addr, strerror(errno));
+        return n;
+    }
+    n->connecting = 1;
+    n->connect_by = now_ms() + 4000;
+    return n;
+}
+
+/* the guest's connection is up: introduce ourselves */
+static int send_hello(netplay_t *n)
+{
     struct sockaddr_storage me;
     socklen_t ml = sizeof(me);
     memset(&me, 0, sizeof(me));
     me.ss_family = n->peer.ss_family;
-    if (n->udp < 0 || bind(n->udp, (struct sockaddr *)&me, n->peer.ss_family == AF_INET6 ?
-                           sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in)) < 0 ||
+    if (bind(n->udp, (struct sockaddr *)&me, n->peer.ss_family == AF_INET6 ?
+             sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in)) < 0 ||
         getsockname(n->udp, (struct sockaddr *)&me, &ml) < 0) {
-        fprintf(stderr, "net: UDP: %s\n", strerror(errno));
-        net_close(n);
-        return NULL;
+        say(n, "UDP: %s", strerror(errno));
+        return 0;
     }
     const int yes = 1;
     setsockopt(n->tcp, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
     hello_t hi = { NET_MAGIC, NET_PROTO, sizeof(spg_snap_t), 1, {0}, 0, 0 };
-    memcpy(hi.id, id, 32);
+    memcpy(hi.id, n->id, 32);
     hi.udp_port = ntohs(me.ss_family == AF_INET6 ? ((struct sockaddr_in6 *)&me)->sin6_port
                                                  : ((struct sockaddr_in *)&me)->sin_port);
     if (!send_msg(n->tcp, MSG_HELLO, &hi, sizeof(hi), NULL, 0)) {
-        fprintf(stderr, "net: the host closed the connection\n");
-        net_close(n);
-        return NULL;
+        say(n, "%s closed the connection", n->peer_name);
+        return 0;
     }
-    set_nonblock(n->tcp);
-    set_nonblock(n->udp);
-    fprintf(stderr, "net: connected to %s port %d, waiting for the game\n", addr, port);
-    return n;
+    fprintf(stderr, "net: connected to %s, waiting for the game\n", n->peer_name);
+    return 1;
 }
 
 int net_wait_start(netplay_t *n, spg_t *m)
 {
     if (n->running) return 1;
+    if (n->tcp < 0 || n->gone) { n->gone = 1; return -1; }
+    if (n->connecting) {
+        struct pollfd pf = { .fd = n->tcp, .events = POLLOUT };
+        if (poll(&pf, 1, 0) == 0) {
+            if (now_ms() < n->connect_by) return 0;
+            say(n, "no answer from %s (is the VPN on?)", n->peer_name);
+            n->gone = 1;
+            return -1;
+        }
+        int err = 0;
+        socklen_t el = sizeof(err);
+        getsockopt(n->tcp, SOL_SOCKET, SO_ERROR, &err, &el);
+        if (err) {
+            if (err == ECONNREFUSED) say(n, "nobody is hosting at %s yet", n->peer_name);
+            else say(n, "can't reach %s: %s", n->peer_name, strerror(err));
+            n->gone = 1;
+            return -1;
+        }
+        n->connecting = 0;
+        if (!send_hello(n)) { n->gone = 1; return -1; }
+        n->connected = 1;
+    }
     if (tcp_poll(n, m) < 0) {
-        if (!n->why[0]) say(n, "the host closed the connection");
+        if (!n->news) say(n, "the host closed the connection");
         n->gone = 1;
         return -1;
     }
     if (n->running) say(n, "joined at frame %u (input delay %d)", n->start, n->o.delay);
     return n->running;
+}
+
+const char *net_reason(const netplay_t *n)
+{
+    return n->why;
+}
+
+int net_refused(const netplay_t *n)
+{
+    return n->refused;
+}
+
+int net_connected(const netplay_t *n)
+{
+    return n->connected;
 }
 
 const char *net_status(const netplay_t *n)

@@ -317,21 +317,28 @@ int main(int argc, char **argv)
     uint8_t rom_hash[32];
     mods_content_id(rom, rom_hash);
     int slot = 0;
+    /* netplay. The host plays on its own while nobody is connected, and listens again when
+     * player 2 leaves. The guest keeps trying to join until the host is there, and after the
+     * host leaves; it stops only if the host refuses it (a different build or mod set). */
     netplay_t *net = NULL;
-    int net_on = 0, net_over = 0;   /* playing with the peer; the guest's game ended with the host's */
-    if (host_port) net = net_host(host_port, &net_o);
-    else if (join) {
-        char addr[256];
-        int port = NET_PORT;
-        snprintf(addr, sizeof(addr), "%s", join);
-        char *c = strrchr(addr, ':');
-        if (addr[0] == '[') {   /* [v6]:port */
-            char *e = strchr(addr, ']');
-            if (e) { *e = 0; if (e[1] == ':') port = atoi(e + 2); memmove(addr, addr + 1, strlen(addr)); }
-        } else if (c && c == strchr(addr, ':')) { *c = 0; port = atoi(c + 1); }
-        net = net_join(addr, port, &net_o, rom_hash);
+    int net_on = 0, net_over = 0;   /* playing with the peer; the host refused us */
+    int net_retry = 0;              /* display frames until the next try */
+    char net_wait[160] = "";        /* why the guest is still waiting */
+    char join_addr[256] = "";
+    int join_port = NET_PORT;
+    if (join) {
+        snprintf(join_addr, sizeof(join_addr), "%s", join);
+        char *c = strrchr(join_addr, ':');
+        if (join_addr[0] == '[') {   /* [v6]:port */
+            char *e = strchr(join_addr, ']');
+            if (e) {
+                *e = 0;
+                if (e[1] == ':') join_port = atoi(e + 2);
+                memmove(join_addr, join_addr + 1, strlen(join_addr));
+            }
+        } else if (c && c == strchr(join_addr, ':')) { *c = 0; join_port = atoi(c + 1); }
     }
-    if ((host_port || join) && !net) return 1;
+    if (host_port && !(net = net_host(host_port, &net_o))) return 1;
     spg_reset(&m);
     mods_reset(&m);
     m.render = 1;
@@ -381,7 +388,7 @@ int main(int argc, char **argv)
             else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
                 char path[1100];
                 snprintf(path, sizeof(path), "%s.st%d", base, slot);
-                if (net && (e.key.keysym.sym == SDLK_F8 || (join && e.key.keysym.sym == SDLK_F5))) {
+                if ((net || join) && (e.key.keysym.sym == SDLK_F8 || (join && e.key.keysym.sym == SDLK_F5))) {
                     osd("Not while playing online");
                     continue;
                 }
@@ -437,26 +444,37 @@ int main(int argc, char **argv)
 
         const Uint8 *keys = SDL_GetKeyboardState(NULL);
         const int ff = keys[SDL_SCANCODE_TAB] && !net;
-        if (net) {
-            /* the host plays on its own until player 2 joins; the guest waits for the host's game */
-            if (!net_on) {
-                const int r = join ? net_wait_start(net, &m) : net_accept(net, &m, rom_hash);
-                if (r > 0) net_on = 1;
-                else if (r < 0) { net_close(net); net = NULL; net_over = 1; }
-            }
-            if (net_on) {
-                const uint16_t b = key_buttons(0) | pad_buttons(pads[0]) | pad_buttons(pads[1]);
-                if (net_tick(net, &m, b, 0, net_run, NULL) < 0) {
-                    net_close(net);
-                    net = NULL;
-                    net_on = 0;
-                    net_over = join != NULL;   /* the guest's game was the host's: it stops */
-                }
-                if (host_port && m.frame % 300 == 0) save_eeprom(&m, save_path);
+        if (!net && !net_over && (host_port || join) && net_retry-- <= 0) {
+            net = host_port ? net_host(host_port, &net_o) : net_join(join_addr, join_port, &net_o, rom_hash);
+            net_retry = 120;
+        }
+        if (net && !net_on) {
+            const int r = join ? net_wait_start(net, &m) : net_accept(net, &m, rom_hash);
+            if (r > 0) {
+                net_on = 1;
+                net_wait[0] = 0;
+            } else if (r < 0) {
+                snprintf(net_wait, sizeof(net_wait), "%s", net_reason(net));
+                net_over = net_refused(net);
+                net_close(net);
+                net = NULL;
             }
         }
+        if (net && net_on) {
+            const uint16_t b = key_buttons(0) | pad_buttons(pads[0]) | pad_buttons(pads[1]);
+            const int r = net_tick(net, &m, b, 0, net_run, NULL);
+            for (const char *ev; (ev = net_event(net));) osd("%s", ev);
+            if (r < 0) {   /* the host goes on alone and listens again; the guest waits again */
+                snprintf(net_wait, sizeof(net_wait), "%s", net_reason(net));
+                net_close(net);
+                net = NULL;
+                net_on = 0;
+                net_retry = 60;
+            }
+            if (host_port && m.frame % 300 == 0) save_eeprom(&m, save_path);
+        }
         for (const char *ev; net && (ev = net_event(net));) osd("%s", ev);
-        if (net_over || (net && (net_on || join))) {
+        if (join || (net && net_on)) {
             /* netplay drives the frames (above), or the guest waits or has stopped */
         } else if (keys[SDL_SCANCODE_BACKSPACE]) {
             /* rewind: step back one snapshot per displayed frame (REWIND_EVERY x speed), silently */
@@ -507,9 +525,18 @@ int main(int argc, char **argv)
         }
         if (ff) osd_text(outbuf, ow, oh, ow - 16 * 6 * 3 - 24, 24, 3, ">> fast forward");
         if (net && net_on) osd_text(outbuf, ow, oh, 16, oh - 16 - 7 * 2, 2, net_status(net));
-        else if (net && join) osd_text(outbuf, ow, oh, 24, oh / 2, 3, "Waiting for the host's game...");
-        else if (net) osd_text(outbuf, ow, oh, 16, oh - 16 - 7 * 2, 2, "Waiting for player 2 to join");
-        if (net_over) osd_text(outbuf, ow, oh, 24, oh / 2, 3, "The game ended (Esc quits)");
+        else if (join) {
+            char line[320];
+            if (net_over) snprintf(line, sizeof(line), "Can't join %s", join_addr);
+            else snprintf(line, sizeof(line), "Waiting for the game at %s...", join_addr);
+            osd_text(outbuf, ow, oh, 24, oh / 2 - 30, 3, line);
+            if (net_wait[0]) osd_text(outbuf, ow, oh, 24, oh / 2 + 10, 2, net_wait);
+            if (net_over) osd_text(outbuf, ow, oh, 24, oh / 2 + 40, 2, "Esc quits");
+        } else if (host_port) {
+            char line[96];
+            snprintf(line, sizeof(line), "Online: waiting for player 2 (port %d)", host_port);
+            osd_text(outbuf, ow, oh, 16, oh - 16 - 7 * 2, 2, line);
+        }
         if (keys[SDL_SCANCODE_BACKSPACE]) osd_text(outbuf, ow, oh, ow - 16 * 6 * 3 - 24, 24, 3, "<< rewind");
         if (osd_left > 0) {
             osd_text(outbuf, ow, oh, 24, 24, 3, osd_msg);
