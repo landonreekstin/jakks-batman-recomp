@@ -2,7 +2,7 @@
  *
  * The game's object loop (0x07E8A5) calls every object's update through `pop sr, pc` at
  * DISPATCH. A hook there sees each call before it happens:
- *   - the player object (0x017C): its return goes to TRAMP_P2. When P1's update returns there,
+ *   - the player object: its return goes to TRAMP_P2. When P1's update returns there,
  *     P2's words go into RAM (P1's are kept) and P2's own update function (its object word 6)
  *     is called, returning to TRAMP_DONE, where P1's words come back;
  *   - objects in the pool (enemies, pickups): each has a target, the nearer player. If it is P2,
@@ -24,6 +24,12 @@
  *   - the HUD: the health/lives and special objects run a second time with P2's words (and
  *     lives) in RAM, and the sprites they add are moved to the bottom of the screen.
  *
+ * Where things are: levels lay out their objects differently (the player is at 0x017C in Street
+ * Party, 0x0130 in the detective levels), so the player and the HUD objects are found through the
+ * game's pointers to them (PLAYER_PTR, HUD_H_PTR, HUD_S_PTR) and checked by their update function.
+ * Co-op runs only in levels with the brawler HUD; elsewhere (menus, Fast Lane) nothing is touched.
+ * An object-loop pass without the player ends P2's level; the next one starts it again.
+ *
  * The camera: the player update calls the camera follow (0x00C695) with the player's position.
  * P1's call gets the midpoint of the two players instead; P2's returns at once. The leash keeps
  * the two at most LEASH pixels apart, so both stay on screen.
@@ -40,10 +46,16 @@
 #include "mod.h"
 #include "spg.h"
 
+#define OBJ_LOOP 0x07E8A5      /* the object loop (once a frame) */
 #define DISPATCH 0x07E8BA      /* object loop: pop sr, pc from [r1] (the node is on the stack) */
-#define PLAYER_NODE 0x017C
-#define POOL_FIRST 0x0260      /* enemies, pickups and effects: 76-word objects from here */
-#define POOL_STRIDE 0x4C
+#define POOL_STRIDE 0x4C       /* objects are 76 words; enemies, pickups and effects follow the HUD's */
+/* the game's pointers to its objects, each to the object + PTR_OFS */
+#define PLAYER_PTR 0x270A
+#define HUD_H_PTR 0x2708
+#define HUD_S_PTR 0x2705
+#define PTR_OFS 0x20
+#define HUD_H_FN 0x0DD3D6      /* the brawler health/lives HUD (Fast Lane's is 0x0DD610) */
+#define HUD_S_FN 0x07FF39      /* the special meter */
 #define OBJ_X 0x15             /* an object's X (as for the player, 0x017C + 0x15 = 0x0191) */
 #define TARGET_STICK 32        /* an object changes target only when the other player is this much nearer */
 #define CAMERA_FOLLOW 0x00C695 /* camera follow (x, y, ...): centres on x - 160, eased */
@@ -65,8 +77,6 @@
 #define TRAMP_HUD 0x3FFF04
 #define TRAMP_HUD_DONE 0x3FFF05
 
-#define HUD_HEALTH_NODE 0x01C8  /* the health bar and lives */
-#define HUD_SPECIAL_NODE 0x0214 /* the special meter */
 #define SPRITE_COUNT 0x20A0     /* the sprite list being built: count, then 4 words each from 0x20A3 */
 #define SPRITE_LIST 0x20A3
 #define P2_HUD_DY (-196)        /* P2's HUD: P1's moved to the bottom of the screen (y is up) */
@@ -87,14 +97,17 @@
 
 #define PAD_HELD 0x080A    /* buttons held (port A & 0xFFF0), written by 0x0DD77F */
 #define PAD_PRESSED 0x080B /* newly pressed this frame */
-#define LEVEL_ID 0x015A
-#define POS_X 0x019C       /* player X, 16.16 (0x019C integer, 0x019D fraction); Y at 0x019E */
-#define POS_Y 0x019E
-#define POS_X_COPY 0x0191  /* copied from POS_X by the update; what enemies read */
-#define POS_X_OLD 0x01C1   /* another copy */
+/* player object words (Street Party addresses in brackets) */
+#define POS_X 0x20         /* X, 16.16 (0x019C integer, 0x019D fraction); Y at 0x22 (0x019E) */
+#define POS_Y 0x22
+#define POS_X_COPY OBJ_X   /* (0x0191) copied from POS_X by the update; what enemies read */
+#define POS_X_OLD 0x45     /* (0x01C1) another copy */
+#define CTX_FIRST 4        /* P2's words: the object minus its list links */
+#define CTX_LAST 0x4B
 
-#define HEALTH 0x01E9     /* 0..0x20 */
+#define HEALTH 0x21        /* health/lives HUD word (0x01E9): 0..0x20 */
 #define HEALTH_FULL 0x20
+#define SPECIAL 0x30       /* special HUD words 0x30, 0x31 (0x0244) */
 #define LIVES 0x2099
 #define GAME_STATE 0x2706  /* 0 playing, 0x0A the player is dying, 4 restarting at a checkpoint */
 #define LOSE_LIFE 0x0DD43C /* called when health would go below 0: a life, or Game Over */
@@ -103,37 +116,57 @@
 #define P2_RESPAWN 180     /* frames P2 is out after losing a life */
 #define LEASH 272          /* the most the players can be apart: one screen (320) minus margins */
 
-/* P2's state: the player object minus its list links (0x017C-0x017F), health, special */
-static const uint16_t ctx_ranges[][2] = {
-    {0x0180, 0x01C7},
-    {0x01E9, 0x01E9},
-    {0x0244, 0x0245},
-};
-#define N_RANGES (sizeof(ctx_ranges) / sizeof(ctx_ranges[0]))
+/* P2's state: the player object minus its list links, health, special */
+#define CTX_N (CTX_LAST - CTX_FIRST + 1)
+#define CTX_HEALTH CTX_N
+#define CTX_SPECIAL (CTX_N + 1)
+#define CTX_WORDS (CTX_N + 3)
 
-static int ctx_words(uint16_t *out)
+static int ctx_words(const coop_t *c, uint16_t *out)
 {
     int n = 0;
-    for (size_t r = 0; r < N_RANGES; r++)
-        for (uint16_t a = ctx_ranges[r][0]; a <= ctx_ranges[r][1]; a++) out[n++] = a;
+    for (int i = CTX_FIRST; i <= CTX_LAST; i++) out[n++] = (uint16_t)(c->base + i);
+    out[n++] = (uint16_t)(c->hud_h + HEALTH);
+    out[n++] = (uint16_t)(c->hud_s + SPECIAL);
+    out[n++] = (uint16_t)(c->hud_s + SPECIAL + 1);
     return n;
 }
 
-/* where a context word sits in coop_t.p1/p2 */
-static int ctx_index(uint16_t addr)
+/* a player's object word: P1's are in RAM between updates, P2's in coop_t.p2 */
+static uint16_t *word(spg_t *m, int player, int ofs)
 {
-    int n = 0;
-    for (size_t r = 0; r < N_RANGES; r++) {
-        if (addr >= ctx_ranges[r][0] && addr <= ctx_ranges[r][1]) return n + addr - ctx_ranges[r][0];
-        n += ctx_ranges[r][1] - ctx_ranges[r][0] + 1;
-    }
-    return -1;
+    coop_t *c = &m->coop;
+    return player == 0 ? &m->ram[(uint16_t)(c->base + ofs)] : &c->p2[ofs - CTX_FIRST];
 }
 
-/* a player's words: P1's are in RAM between updates, P2's in coop_t.p2 */
-static uint16_t *word(spg_t *m, int player, uint16_t addr)
+static uint16_t *health(spg_t *m, int player)
 {
-    return player == 0 ? &m->ram[addr] : &m->coop.p2[ctx_index(addr)];
+    coop_t *c = &m->coop;
+    return player == 0 ? &m->ram[(uint16_t)(c->hud_h + HEALTH)] : &c->p2[CTX_HEALTH];
+}
+
+/* the update function an object's word 6 points to */
+static uint32_t update_fn(spg_t *m, uint16_t node)
+{
+    if (node >= 0x2800 - 7) return 0;
+    const uint16_t fp = m->ram[node + 6];
+    return (uint32_t)(spg_peek(m, fp) & 0x3f) << 16 | spg_peek(m, (uint16_t)(fp + 1));
+}
+
+/* is this the player, in a level with the brawler HUD? Finds the HUD objects and the pool too. */
+static int find_player(spg_t *m, uint16_t node)
+{
+    coop_t *c = &m->coop;
+    if (node != (uint16_t)(m->ram[PLAYER_PTR] - PTR_OFS)) return 0;
+    const uint16_t h = (uint16_t)(m->ram[HUD_H_PTR] - PTR_OFS), s = (uint16_t)(m->ram[HUD_S_PTR] - PTR_OFS);
+    if (update_fn(m, h) != HUD_H_FN || update_fn(m, s) != HUD_S_FN) return 0;
+    c->base = node;
+    c->hud_h = h;
+    c->hud_s = s;
+    uint16_t last = node > h ? node : h;
+    if (s > last) last = s;
+    c->pool = (uint16_t)(last + POOL_STRIDE);
+    return 1;
 }
 
 static void move_x(spg_t *m, int player, int16_t x)
@@ -152,7 +185,7 @@ static void swap_in_p2(spg_t *m)
 {
     coop_t *c = &m->coop;
     uint16_t addrs[COOP_CTX_MAX];
-    const int n = ctx_words(addrs);
+    const int n = ctx_words(c, addrs);
     for (int i = 0; i < n; i++) {
         c->p1[i] = m->ram[addrs[i]];
         m->ram[addrs[i]] = c->p2[i];
@@ -163,7 +196,7 @@ static void swap_out_p2(spg_t *m)
 {
     coop_t *c = &m->coop;
     uint16_t addrs[COOP_CTX_MAX];
-    const int n = ctx_words(addrs);
+    const int n = ctx_words(c, addrs);
     for (int i = 0; i < n; i++) {
         c->p2[i] = m->ram[addrs[i]];
         m->ram[addrs[i]] = c->p1[i];
@@ -187,16 +220,18 @@ static void start_level(spg_t *m)
     /* P2 starts as a copy of P1, a little behind */
     coop_t *c = &m->coop;
     uint16_t addrs[COOP_CTX_MAX];
-    const int n = ctx_words(addrs);
+    const int n = ctx_words(c, addrs);
     for (int i = 0; i < n; i++) c->p2[i] = m->ram[addrs[i]];
-    move_x(m, 1, (int16_t)(m->ram[POS_X] - SPAWN_BEHIND));
+    move_x(m, 1, (int16_t)(*word(m, 0, POS_X) - SPAWN_BEHIND));
     c->active = 1;
-    c->level = m->ram[LEVEL_ID];
     c->prev2 = c->buttons2 & 0xFFF0;
-    c->last_x[0] = (int16_t)m->ram[POS_X];
+    c->last_x[0] = (int16_t)*word(m, 0, POS_X);
     c->last_x[1] = (int16_t)*word(m, 1, POS_X);
     memset(c->target, 0, sizeof(c->target));
-    if (!c->p2_lives && !c->p2_out) c->p2_lives = m->ram[LIVES]; /* the first level: as many as P1 */
+    if (!c->lives_set) { /* the first level: as many as P1 */
+        c->p2_lives = m->ram[LIVES];
+        c->lives_set = 1;
+    }
     c->p2_down = 0;
 }
 
@@ -206,7 +241,7 @@ static int pick_target(spg_t *m, int slot, uint16_t node)
 {
     coop_t *c = &m->coop;
     const int ox = (int16_t)m->ram[node + OBJ_X];
-    const int d1 = abs(ox - (int16_t)m->ram[POS_X_COPY]);
+    const int d1 = abs(ox - (int16_t)*word(m, 0, POS_X_COPY));
     const int d2 = abs(ox - (int16_t)*word(m, 1, POS_X_COPY));
     int t = c->target[slot];
     if (t == 0 && d2 + TARGET_STICK < d1) t = 1;
@@ -224,12 +259,23 @@ static void respawn_p2(spg_t *m)
 {
     coop_t *c = &m->coop;
     uint16_t addrs[COOP_CTX_MAX];
-    const int n = ctx_words(addrs);
+    const int n = ctx_words(c, addrs);
     for (int i = 0; i < n; i++) c->p2[i] = m->ram[addrs[i]];
-    move_x(m, 1, (int16_t)(m->ram[POS_X] - SPAWN_BEHIND));
-    *word(m, 1, HEALTH) = HEALTH_FULL;
+    move_x(m, 1, (int16_t)(*word(m, 0, POS_X) - SPAWN_BEHIND));
+    *health(m, 1) = HEALTH_FULL;
     c->last_x[1] = (int16_t)*word(m, 1, POS_X);
     c->p2_down = 0;
+}
+
+/* a new pass of the object loop: if the last one had no player, the level is over for P2 */
+static int on_obj_loop(spg_t *m, void *user)
+{
+    (void)user;
+    coop_t *c = &m->coop;
+    if (!c->enabled || c->phase) return 0;
+    if (!c->seen) c->active = 0;
+    c->seen = 0;
+    return 0;
 }
 
 static int on_dispatch(spg_t *m, void *user)
@@ -238,8 +284,9 @@ static int on_dispatch(spg_t *m, void *user)
     coop_t *c = &m->coop;
     if (!c->enabled || c->phase) return 0;
     const uint16_t node = m->ram[(uint16_t)(m->cpu.r[REG_SP] + 3)];
-    if (node == PLAYER_NODE) {
-        if (!c->active || c->level != m->ram[LEVEL_ID]) start_level(m);
+    if (find_player(m, node)) {
+        c->seen = 1;
+        if (!c->active) start_level(m);
         /* P1 restarted at a checkpoint: P2 comes along */
         if (c->game_state == 4 && m->ram[GAME_STATE] == 0 && !c->p2_out) respawn_p2(m);
         c->game_state = m->ram[GAME_STATE];
@@ -248,14 +295,15 @@ static int on_dispatch(spg_t *m, void *user)
         c->phase = 1;
         return 0;
     }
-    if ((node == HUD_HEALTH_NODE || node == HUD_SPECIAL_NODE) && c->active && !c->p2_out) {
+    if (!c->active) return 0;
+    if ((node == c->hud_h || node == c->hud_s) && !c->p2_out) {
         redirect_return(m, TRAMP_HUD);
         c->coll_a = node; /* free while the object loop runs */
         c->phase = 5;
         return 0;
     }
-    if (!p2_in_play(c) || node < POOL_FIRST || (node - POOL_FIRST) % POOL_STRIDE) return 0;
-    const int slot = (node - POOL_FIRST) / POOL_STRIDE;
+    if (!p2_in_play(c) || node < c->pool || (node - c->pool) % POOL_STRIDE) return 0;
+    const int slot = (node - c->pool) / POOL_STRIDE;
     if (slot >= COOP_TARGETS || !pick_target(m, slot, node)) return 0;
     swap_in_p2(m);
     redirect_return(m, TRAMP_OBJ_DONE);
@@ -331,10 +379,10 @@ static int on_p2(spg_t *m, void *user)
     /* call P2's update as the object loop does: push the return (PC, then SR), then load SR
      * and PC from the far pointer in its object word 6 */
     uint16_t *r = m->cpu.r;
-    push(m, PLAYER_NODE); /* the argument */
+    push(m, c->base); /* the argument */
     push(m, TRAMP_DONE & 0xFFFF);
     push(m, (uint16_t)((r[REG_SR] & ~0x3f) | (TRAMP_DONE >> 16)));
-    const uint16_t fp = m->ram[PLAYER_NODE + 6];
+    const uint16_t fp = m->ram[c->base + 6];
     r[REG_SR] = spg_peek(m, fp);
     r[REG_PC] = spg_peek(m, (uint16_t)(fp + 1));
     m->cpu.cycles += 9;
@@ -520,7 +568,7 @@ static int on_coll(spg_t *m, void *user)
         uint16_t n = m->ram[(uint16_t)(m->ram[0x26FA] + 2)];
         for (int guard = 0; n && n < 0x2800 && guard < 64; guard++) {
             if (spg_peek(m, (uint16_t)(n + 6)) == 0) break;
-            if (n != PLAYER_NODE && c->coll_n < (int)(sizeof(c->coll_list) / sizeof(c->coll_list[0])))
+            if (n != c->base && c->coll_n < (int)(sizeof(c->coll_list) / sizeof(c->coll_list[0])))
                 c->coll_list[c->coll_n++] = n;
             n = m->ram[n + 2];
         }
@@ -557,9 +605,9 @@ static int on_coll(spg_t *m, void *user)
         while (c->coll_i < c->coll_n) {
             x = c->coll_list[c->coll_i++];
             if (!linked(m, x)) continue;
-            const int before = (int16_t)w[x + OBJ_LEFT] <= (int16_t)w[PLAYER_NODE + OBJ_LEFT];
-            c->coll_a = before ? x : PLAYER_NODE;
-            c->coll_b = before ? PLAYER_NODE : x;
+            const int before = (int16_t)w[x + OBJ_LEFT] <= (int16_t)w[c->base + OBJ_LEFT];
+            c->coll_a = before ? x : c->base;
+            c->coll_b = before ? c->base : x;
             if (near_pair(m, c->coll_a, c->coll_b)) break;
             x = 0;
         }
@@ -581,6 +629,7 @@ done:
 void coop_attach(spg_t *m)
 {
     m->coop.enabled = 1;
+    mods_hook(OBJ_LOOP, on_obj_loop, NULL);
     mods_hook(DISPATCH, on_dispatch, NULL);
     mods_hook(CAMERA_FOLLOW, on_camera, NULL);
     mods_hook(FAR_READ, on_far_read, NULL);

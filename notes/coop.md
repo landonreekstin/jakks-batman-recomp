@@ -21,6 +21,13 @@ one function) and RAM dumps from session1.
 
 ## Objects
 
+**The layout depends on the level.** In Street Party the player is at 0x017C and the HUD objects at
+0x01C8 and 0x0214, with the pool from 0x0260. In the detective level *Search for a Smile* (Joker's
+first mission) everything is one slot earlier: the player is at 0x0130, the HUD at 0x017C and 0x01C8.
+The game points to them from 0x270A (player), 0x2708 (health/lives HUD) and 0x2705 (special HUD),
+each to the object + 0x20. The addresses below are Street Party's.
+
+
 - **The object list.** 0x07E8A5 walks a linked list from [[0x26FA] + 2].
   - Each node is 76 words.
   - Word 2 is the next node, and words 0–3 are list links.
@@ -99,6 +106,14 @@ It doesn't write health (0x01E9) or lives (0x2099); enemies and the HUD objects 
 
 ## How co-op works (recomp/src/coop.c)
 
+- **Finding the objects.** The player is the object at [0x270A] − 0x20, and only in a level where
+  [0x2708] − 0x20 runs the brawler HUD (0x0DD3D6) and [0x2705] − 0x20 the special meter (0x07FF39).
+  Health is the HUD's word 0x21 and special its words 0x30–0x31. Elsewhere (menus, Fast Lane, whose
+  HUD is 0x0DD610 and which has no player pointer) co-op does nothing. A pass of the object loop
+  (0x07E8A5) without the player ends P2's level. Pausing keeps the player in the loop.
+  - The first version took the objects by their Street Party addresses. In the detective level it
+    redirected the return of the object at 0x0214 (a level object, 0x0DB492, there) and crashed.
+
 All of it runs from PC hooks, with trampolines at 0x3FFF00+ in the upper ROM copy, which the game
 never runs. All of the state is in `spg_t.coop` and in save states.
 
@@ -129,6 +144,9 @@ never runs. All of the state is in `spg_t.coop` and in save states.
 - **P2's HUD** shows Batman's lives heads.
 - **P2 dies at once:** no knockdown animation, and no blinking on respawn.
 - **Robin's melee range and Birdarang:** these are code patches, so P2 has Batman's.
-- **Doors and scene changes** inside a level are untested.
+- **Doors and scene changes** inside a level are untested. In *Search for a Smile*, P1 or P2 pressing
+  X or Up at the first door (its OPEN prompt showing) didn't open it; it may need a clue first.
+- **Pool objects** run with P2's words in RAM when they target P2, including non-enemies (level
+  objects such as 0x0DB492). Harmless so far, but a level object that moves the player would move P2.
 - **Fast Lane (driving):** P2 is not there yet.
 - **Netplay.**

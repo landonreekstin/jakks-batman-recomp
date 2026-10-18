@@ -56,8 +56,8 @@ PPU/SPU work.
   `--record`. It covers 68,520 vblanks (19 min): the Street Party brawler level, then the
   Fast Lane Batcycle level to Level Completed. All frames are identical, all 20,586,666 peripheral writes and
   541,817 reads match, and 14/14 snapshots are pixel-identical. Each side of the capture is about 1.7 GB.
-- **Co-op prototype** (`recomp/src/coop.c`): local two-player Street Party (P2 = Robin with
-  `mods/robin-p2`). Single player is unchanged, and session2 still matches MAME. Co-op runs repeat
+- **Co-op prototype** (`recomp/src/coop.c`): local two-player brawler and detective levels (Street Party and *Search for a Smile* checked; P2 = Robin
+  with `mods/robin-p2`). Driving levels stay single player. Single player is unchanged, and session2 still matches MAME. Co-op runs repeat
   identically and survive save/load. Next: P1 respawning in place while P2 lives, the driving
   levels, and netplay (plan in `notes/coop.md`).
 - Not done: static recompiler (code is still interpreted).

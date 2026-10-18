@@ -1,9 +1,9 @@
 /* Two-player co-op in a one-player game (notes/coop.md).
  *
- * The game has one player object (RAM 0x017C, 76 words, update function 0x008BF7) and keeps a
- * few player globals elsewhere. P2 is a second copy of that state: each frame the player update
- * runs twice, the second time with P2's state and buttons swapped into the same RAM. All of it
- * lives in spg_t, so save states (and rollback) cover it. */
+ * The game has one player object (76 words, update function 0x008BF7; where it sits in RAM depends
+ * on the level) and keeps a few player globals elsewhere. P2 is a second copy of that state: each
+ * frame the player update runs twice, the second time with P2's state and buttons swapped into the
+ * same RAM. All of it lives in spg_t, so save states (and rollback) cover it. */
 #ifndef COOP_H
 #define COOP_H
 
@@ -17,7 +17,12 @@ typedef struct coop {
     uint16_t buttons2;        /* P2's controller, port A layout (bits 8..15) */
     uint16_t prev2;           /* P2's held buttons last time its update ran */
     int active;               /* P2 exists in the current level */
-    uint16_t level;           /* level id (RAM 0x015A) P2 was created in */
+    int seen;                 /* the player's update ran in this pass of the object loop */
+    int lives_set;            /* p2_lives has been given its starting value */
+    /* where this level put things (coop.c, found through the game's own pointers) */
+    uint16_t base;            /* the player object: 0x017C in Street Party, 0x0130 in the detective levels */
+    uint16_t hud_h, hud_s;    /* the health/lives and special HUD objects */
+    uint16_t pool;            /* the first object after them (enemies, pickups) */
     int phase;                /* 0 idle, 1 P1's update, 2 P2's, 3 an object's with P2 in, 4 P2's collisions */
     uint16_t ret_sr, ret_pc;  /* where the game's call of the player update returns to */
     uint16_t p1[COOP_CTX_MAX];   /* P1's words while P2's are swapped in */

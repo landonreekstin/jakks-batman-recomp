@@ -13,7 +13,6 @@ was confirmed:
 
 | Addr | Meaning | Values | How |
 |---|---|---|---|
-| 0x015A | level id | 0x0C Street Party (set at vblank 3775), 0x0D Fast Lane (48709); 0xF00D before the first level | trace |
 | 0x01E9 | player health (brawler levels) | 0x20 = full; −2 per hit, +4 per pickup | poke: 6 → bar shows a sliver; `mods/example-cheat` |
 | 0x0244 | SPECIAL meter (brawler); 0x0A in Fast Lane, probably BOOST there | 0–0x20 | poke: 0x20 → meter full |
 | 0x0191 | player X in level pixels (copies at 0x019C, 0x01C1) | 0x0194 at 4450, 0x0A9F at 11050 | math: X − camera X = Batman's sprite position |
@@ -22,6 +21,7 @@ was confirmed:
 | 0x208F | camera Y (copy at 0x2604) | 5 at 11050 = page 2's Y scroll | math |
 | 0x2099 | lives (the heads under the health bar) | 4 at the start; −1 per death (session2: 4→0 at vblanks 5634, 7060, 8474, 9895), Game Over after the death at 0 | poke: 1 → one head; 9 → nine heads and no Game Over |
 | 0x0150–0x015A | brawler section loop, pointed to by 0x270B | [0] length in tile columns, [1] start column, [7] map column, [8] = 0x0158 section number (0..0x0B in Street Party) | code: FUN_00e74e (notes/level-format.md) |
+| 0x270A, 0x2708, 0x2705 | pointers to the player, the health/lives HUD and the special HUD objects, each to the object + 0x20 (Street Party: 0x019C, 0x01E8, 0x0234; the detective level *Search for a Smile*: 0x0150, 0x019C, 0x01E8) | | trace, and co-op relies on them |
 | 0x01E8 | +0x0C at each respawn (f019, f025, f031...) | | trace, meaning unknown |
 | 0x25E9, 0x2603 | layer structs for page 1 and page 2 (map pointer, width, tile base, camera limits) | | code: FUN_00bfb5 (notes/level-format.md) |
 | 0x0809 | vblank counter, incremented by the IRQ handler | | code (notes/game-structure.md) |
@@ -29,6 +29,10 @@ was confirmed:
 | 0x148E–0x1C8D, 0x1C8E–0x208D | page 2 tilemap and tile attributes | | PPU registers |
 
 ## Candidates
+
+- No level id is known yet. 0x015A was listed as one (0x0C Street Party, 0x0D Fast Lane), but it is
+  inside the object slot at 0x0130: the section object in Street Party, the player in the detective
+  levels (0x10 there is the player's word 0x2A).
 
 - 0x015D: follows 0x0158, the section number.
 - 0x0180: moves with the player. It's 0x2C less than player X at 11050, maybe a hitbox edge.
