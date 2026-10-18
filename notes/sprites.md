@@ -125,7 +125,7 @@ draws all 183 frames correctly assembled.
 - **`mods/robin` v2** (`generate.py`) rebuilds the player's frames 0–138 from staff-fighter frames
   (thug frames for the knockdown):
   - each frame is repainted by rule (tunic/legs split, staff by shape, cape), gets one hand-drawn
-    head (`HEAD`, 7x8, outlined and shaded like the game's art) in place of the source's, and is
+    head (`HEAD`, 6x8 with a flat profile, outlined and shaded like the game's art) in place of the source's, and is
     re-cut into pieces. The head goes on the source head's chin line, but held over the top of the
     body (the biggest patch of tunic), so it stays upright where the fighter hunches forward, with its chin no lower than 3 px under the
     top of the back. Staff tips left floating above it are removed;
