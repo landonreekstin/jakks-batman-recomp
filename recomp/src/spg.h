@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "coop.h"
 #include "i2c.h"
 #include "ppu.h"
 #include "spu.h"
@@ -67,10 +68,17 @@ typedef struct spg {
        as "vblank W|R pc addr value" */
     FILE *watch;
     uint32_t watch_wlo, watch_whi, watch_rlo, watch_rhi;
+    /* with watch_fn set, only accesses made inside a call of that function (from its entry until
+       SP rises above its value there) are logged */
+    uint32_t watch_fn;
+    int watch_in;
+    uint16_t watch_sp;
 
     /* PC hooks for mods (mod.c): one bit per word address; pc_hook returns 1 if it moved PC */
     const uint8_t *hook_map;
     int (*pc_hook)(struct spg *m, uint32_t pc);
+
+    coop_t coop;            /* two-player state (coop.c); plain data, so save states keep it */
 } spg_t;
 
 int spg_init(spg_t *m, const uint16_t *rom);

@@ -38,4 +38,8 @@ void mods_frame(spg_t *m);
 
 int mods_count(void);
 
+/* a PC hook from the runtime itself (co-op); same rules as the plugin API's hook. Register
+ * before mods_attach. */
+void mods_hook(uint32_t addr, int (*fn)(spg_t *m, void *user), void *user);
+
 #endif

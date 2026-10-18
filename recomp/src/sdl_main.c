@@ -1,7 +1,7 @@
 /* SDL2 front end: play The Batman natively.
  *
  *   batman <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N]
- *                       [--record script.txt] [--mods a,b] [--mods-dir dir]
+ *                       [--record script.txt] [--mods a,b] [--mods-dir dir] [--coop]
  *
  * Keys: arrows = joypad, Z = A (jump), X = B (attack), C = X (search/use),
  *       Enter = Menu, Esc = quit. Game controllers are mapped the same way
@@ -10,6 +10,8 @@
  *       Backspace (hold) = rewind, Tab (hold) = fast forward,
  *       F9 / Shift+F9 = next/previous CRT filter, F11 = fullscreen, F12 = screenshot,
  *       - / = (or keypad - / +) = volume down/up, M = mute.
+ * --coop: two players (coop.c). P2's keys are W A S D, J = A, K = B, L = X, P = Menu. With two
+ *       controllers each player gets one; with one, it is P2's. Recordings get a second mask.
  * The 24C04 save EEPROM is kept in --save (default batman.sav next to the ROM). States go
  * to <save file minus .sav>.st<slot>, screenshots to <save file minus .sav>-NNNN.png.
  * The volume (--volume 0-100, default 100) and the filter are remembered in
@@ -28,6 +30,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "coop.h"
 #include "crt.h"
 #include "osd.h"
 #include "mod.h"
@@ -135,30 +138,37 @@ static void save_eeprom(spg_t *m, const char *path)
     m->eeprom.dirty = 0;
 }
 
-static uint16_t read_buttons(SDL_GameController *pad)
+static uint16_t pad_buttons(SDL_GameController *pad)
 {
+    uint16_t b = 0;
+    if (!pad) return 0;
+    const Sint16 ax = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
+    const Sint16 ay = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_UP) || ay < -16000) b |= BTN_UP;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN) || ay > 16000) b |= BTN_DOWN;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_LEFT) || ax < -16000) b |= BTN_LEFT;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) || ax > 16000) b |= BTN_RIGHT;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A)) b |= BTN_A;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_X)) b |= BTN_B;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_Y)) b |= BTN_X;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_START)) b |= BTN_MENU;
+    return b;
+}
+
+/* keyboard: P1 arrows Z X C Enter; P2 (co-op) W A S D, J K L, P */
+static uint16_t key_buttons(int player)
+{
+    static const SDL_Scancode map[2][8] = {
+        {SDL_SCANCODE_UP, SDL_SCANCODE_DOWN, SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT,
+         SDL_SCANCODE_Z, SDL_SCANCODE_X, SDL_SCANCODE_C, SDL_SCANCODE_RETURN},
+        {SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D,
+         SDL_SCANCODE_J, SDL_SCANCODE_K, SDL_SCANCODE_L, SDL_SCANCODE_P},
+    };
+    static const uint16_t bits[8] = {BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_X, BTN_MENU};
     const Uint8 *k = SDL_GetKeyboardState(NULL);
     uint16_t b = 0;
-    if (k[SDL_SCANCODE_UP]) b |= BTN_UP;
-    if (k[SDL_SCANCODE_DOWN]) b |= BTN_DOWN;
-    if (k[SDL_SCANCODE_LEFT]) b |= BTN_LEFT;
-    if (k[SDL_SCANCODE_RIGHT]) b |= BTN_RIGHT;
-    if (k[SDL_SCANCODE_Z]) b |= BTN_A;
-    if (k[SDL_SCANCODE_X]) b |= BTN_B;
-    if (k[SDL_SCANCODE_C]) b |= BTN_X;
-    if (k[SDL_SCANCODE_RETURN]) b |= BTN_MENU;
-    if (pad) {
-        const Sint16 ax = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
-        const Sint16 ay = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_UP) || ay < -16000) b |= BTN_UP;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_DOWN) || ay > 16000) b |= BTN_DOWN;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_LEFT) || ax < -16000) b |= BTN_LEFT;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) || ax > 16000) b |= BTN_RIGHT;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A)) b |= BTN_A;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_X)) b |= BTN_B;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_Y)) b |= BTN_X;
-        if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_START)) b |= BTN_MENU;
-    }
+    for (int i = 0; i < 8; i++)
+        if (k[map[player][i]]) b |= bits[i];
     return b;
 }
 
@@ -200,7 +210,7 @@ int main(int argc, char **argv)
 {
     const char *rom_path = NULL;
     char save_path[1024] = "";
-    int scale = 3, filter = -1, volume_arg = -1;
+    int scale = 3, filter = -1, volume_arg = -1, coop = 0;
     long max_frames = -1;
     const char *record_path = NULL, *mod_list = NULL, *mods_dir = "mods";
     for (int i = 1; i < argc; i++) {
@@ -210,6 +220,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--record") && i + 1 < argc) record_path = argv[++i];
         else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
         else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
+        else if (!strcmp(argv[i], "--coop")) coop = 1;
         else if (!strcmp(argv[i], "--volume") && i + 1 < argc) {
             volume_arg = atoi(argv[++i]);
             if (volume_arg < 0 || volume_arg > 100) { fprintf(stderr, "--volume takes 0-100\n"); return 2; }
@@ -224,15 +235,16 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100] [--coop]\n", argv[0]);
         return 2;
     }
     FILE *rec = NULL;
     if (record_path) {
         rec = fopen(record_path, "w");
         if (!rec) { perror(record_path); return 1; }
-        fprintf(rec, "# vblank hexmask (P1: 8000 up 4000 down 2000 left 1000 right 0800 A 0400 menu 0200 B 0100 X)\n"
-                     "# recorded with recomp/build/batman --record, blank EEPROM\n");
+        fprintf(rec, "# vblank hexmask%s (8000 up 4000 down 2000 left 1000 right 0800 A 0400 menu 0200 B 0100 X)\n"
+                     "# recorded with recomp/build/batman --record%s, blank EEPROM\n",
+                coop ? " [P2 hexmask]" : "", coop ? " --coop" : "");
         snprintf(save_path, sizeof(save_path), "%s.sav", record_path);
     } else if (!save_path[0]) {
         snprintf(save_path, sizeof(save_path), "%s", rom_path);
@@ -260,9 +272,10 @@ int main(int argc, char **argv)
     char enabled[4096];
     if (!mod_list && mods_enabled_list(mods_dir, enabled, sizeof(enabled))) mod_list = enabled;
     if (mod_list && !mods_load(mod_list, mods_dir, rom, file_sha)) return 1;
-    if (rec && mods_count()) fprintf(stderr, "warning: recording with mods; MAME will not reproduce it\n");
+    if (rec && (mods_count() || coop)) fprintf(stderr, "warning: recording with mods or co-op; MAME will not reproduce it\n");
     static spg_t m;
     spg_init(&m, rom);
+    if (coop) coop_attach(&m);
     mods_attach(&m);
     FILE *sf = rec ? NULL : fopen(save_path, "rb");
     if (sf) {
@@ -303,9 +316,11 @@ int main(int argc, char **argv)
     if (!audio_dev) fprintf(stderr, "no audio: %s\n", SDL_GetError());
     else SDL_PauseAudioDevice(audio_dev, 0);
 
-    SDL_GameController *pad = NULL;
-    for (int i = 0; i < SDL_NumJoysticks() && !pad; i++)
-        if (SDL_IsGameController(i)) pad = SDL_GameControllerOpen(i);
+    /* controllers in the order they were found. Single player: the first one. Co-op: with two,
+     * one each; with one, it is P2's (P1 has the keyboard's arrows). */
+    SDL_GameController *pads[2] = {NULL, NULL};
+    for (int i = 0; i < SDL_NumJoysticks() && !pads[1]; i++)
+        if (SDL_IsGameController(i)) pads[pads[0] ? 1 : 0] = SDL_GameControllerOpen(i);
 
     const Uint64 freq = SDL_GetPerformanceFrequency();
     const double frame_ticks = (double)freq / 60.0;
@@ -363,7 +378,10 @@ int main(int argc, char **argv)
                 default: break;
                 }
             }
-            else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
+            else if (e.type == SDL_CONTROLLERDEVICEADDED && !pads[1]) {
+                SDL_GameController *p = SDL_GameControllerOpen(e.cdevice.which);
+                if (p && p != pads[0]) pads[pads[0] ? 1 : 0] = p;
+            }
         }
 
         const Uint8 *keys = SDL_GetKeyboardState(NULL);
@@ -381,9 +399,19 @@ int main(int argc, char **argv)
                 /* the buttons set here are what the CPU sees from vblank m.frame on, which is
                  * what an input-script line "<m.frame> <mask>" means to batman-rt and capture.lua.
                  * Nothing is pressed before vblank 1: neither harness applies input at vblank 0. */
-                const uint16_t b = m.frame ? read_buttons(pad) : 0;
-                if (rec && b != m.buttons) fprintf(rec, "%u %04x\n", m.frame, b);
+                uint16_t b = 0, b2 = 0;
+                if (m.frame) {
+                    SDL_GameController *p1 = coop && !pads[1] ? NULL : pads[0];
+                    SDL_GameController *p2 = coop ? (pads[1] ? pads[1] : pads[0]) : NULL;
+                    b = key_buttons(0) | pad_buttons(p1);
+                    if (coop) b2 = key_buttons(1) | pad_buttons(p2);
+                }
+                if (rec && (b != m.buttons || b2 != m.coop.buttons2)) {
+                    if (coop) fprintf(rec, "%u %04x %04x\n", m.frame, b, b2);
+                    else fprintf(rec, "%u %04x\n", m.frame, b);
+                }
                 m.buttons = b;
+                m.coop.buttons2 = b2;
                 if (m.frame % REWIND_EVERY == 0) rewind_push(&m);
                 if (!spg_run_frame(&m, NULL, NULL)) {
                     fprintf(stderr, "CPU stopped at %06x\n", unsp_lpc(&m.cpu));
@@ -426,7 +454,8 @@ int main(int argc, char **argv)
 
     save_eeprom(&m, save_path);
     if (rec) stop_recording(&rec, record_path, m.frame);
-    if (pad) SDL_GameControllerClose(pad);
+    for (int i = 0; i < 2; i++)
+        if (pads[i]) SDL_GameControllerClose(pads[i]);
     if (volume != volume_at_start || filter != filter_at_start) save_config(cfg_path, filter);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
     SDL_DestroyTexture(tex);

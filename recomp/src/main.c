@@ -3,7 +3,9 @@
  *   batman-rt <batman.bin> [--frames N] [--replay io.log] [--iolog out.log]
  *             [--dump frames.bin] [--trace out.tr --trace-instr N] [--wav out.wav]
  *             [--snap dir --snap-frames a,b,c]   (PNG of the frame rendered at vblank N)
- *             [--input script]   lines "<vblank> <hex mask>", same as capture.lua CAP_INPUT
+ *             [--input script]   lines "<vblank> <hex mask> [<hex mask P2>]", same as capture.lua
+ *                                CAP_INPUT (which reads only P1's)
+ *             [--coop]           two players (coop.c); P2's buttons are the scripts' second mask
  *             [--state-save-at N file] [--state-load file]
  *             [--filter mode]    write --snap PNGs through a CRT filter (crt.h), at 4x
  *             [--mods a,b [--mods-dir dir]]   runtime mods (mod.h); default dir "mods"
@@ -15,7 +17,8 @@
  *             [--bake out.bin]   write the ROM file with the mods' patches applied, for MAME
  *             [--watch out.txt spec] log CPU accesses as "vblank W|R pc addr value"; spec is a
  *                                comma list of w:LO-HI (writes), r:LO-HI (data reads), from:N
- *                                and to:N (vblanks), numbers in hex except from/to
+ *                                and to:N (vblanks), fn:ADDR (only inside calls of the function at
+ *                                ADDR), numbers in hex except from/to
  *
  * --replay feeds MAME's recorded peripheral reads (tools/mame/capture.lua) back in, so the
  * CPU can be checked against MAME before the peripherals are modelled exactly. The outputs
@@ -24,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "coop.h"
 #include "crt.h"
 #include "mod.h"
 #include "png.h"
@@ -39,7 +43,7 @@ static const char *vdump_dir;
 static crt_t *snap_crt;
 static int snap_filter;
 static uint32_t *snap_buf;
-static struct input_rec { uint32_t frame; uint16_t mask; } *inputs;
+static struct input_rec { uint32_t frame; uint16_t mask, mask2; } *inputs;
 static int cap_inputs;
 static int n_inputs;
 
@@ -48,14 +52,17 @@ static int load_inputs(const char *path)
     FILE *f = fopen(path, "r");
     if (!f) return 0;
     char line[256];
-    unsigned fr, mask;
-    while (fgets(line, sizeof(line), f))
-        if (sscanf(line, "%u %x", &fr, &mask) == 2) {
+    unsigned fr, mask, mask2;
+    while (fgets(line, sizeof(line), f)) {
+        const int k = sscanf(line, "%u %x %x", &fr, &mask, &mask2);
+        if (k >= 2) {
             if (n_inputs == cap_inputs)
                 inputs = realloc(inputs, (size_t)(cap_inputs = cap_inputs ? cap_inputs * 2 : 4096) * sizeof(*inputs));
             inputs[n_inputs].frame = fr;
-            inputs[n_inputs++].mask = (uint16_t)mask;
+            inputs[n_inputs].mask = (uint16_t)mask;
+            inputs[n_inputs++].mask2 = k == 3 ? (uint16_t)mask2 : 0;
         }
+    }
     fclose(f);
     return 1;
 }
@@ -117,7 +124,10 @@ static void dump_frame(spg_t *m)
 {
     static int next_input; /* scripts are in vblank order */
     while (next_input < n_inputs && inputs[next_input].frame <= m->frame) {
-        if (inputs[next_input].frame == m->frame) m->buttons = inputs[next_input].mask;
+        if (inputs[next_input].frame == m->frame) {
+            m->buttons = inputs[next_input].mask;
+            m->coop.buttons2 = inputs[next_input].mask2;
+        }
         next_input++;
     }
     if (!dump_out) return;
@@ -148,6 +158,7 @@ int main(int argc, char **argv)
     const char *rom_path = NULL, *replay = NULL, *iolog = NULL, *dump = NULL, *trace_path = NULL;
     unsigned frames = 600;
     uint64_t trace_instr = 0;
+    int coop = 0;
     const char *state_save = NULL, *state_load = NULL, *mod_list = NULL, *mods_dir = "mods", *bake = NULL, *romcov = NULL;
     const char *watch = NULL, *watch_spec = NULL;
     FILE *watch_out = NULL;
@@ -168,6 +179,7 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(argv[i], "--state-load") && i + 1 < argc) state_load = argv[++i];
         else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
+        else if (!strcmp(argv[i], "--coop")) coop = 1;
         else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
         else if (!strcmp(argv[i], "--bake") && i + 1 < argc) bake = argv[++i];
         else if (!strcmp(argv[i], "--romcov") && i + 1 < argc) romcov = argv[++i];
@@ -202,6 +214,7 @@ int main(int argc, char **argv)
 
     static spg_t m;
     spg_init(&m, rom);
+    if (coop) coop_attach(&m);
     mods_attach(&m);
     if (romcov) {
         m.romcov = calloc(ROM_SPACE_WORDS, 1);
@@ -218,6 +231,7 @@ int main(int argc, char **argv)
             else if (sscanf(t, "r:%x-%x", &lo, &hi) == 2) { m.watch_rlo = lo; m.watch_rhi = hi; }
             else if (sscanf(t, "from:%u", &lo) == 1) watch_from = lo;
             else if (sscanf(t, "to:%u", &lo) == 1) watch_to = lo;
+            else if (sscanf(t, "fn:%x", &lo) == 1) m.watch_fn = lo;
             else { fprintf(stderr, "--watch: bad spec item '%s'\n", t); return 1; }
         }
     }

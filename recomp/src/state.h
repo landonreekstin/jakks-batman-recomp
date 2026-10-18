@@ -35,6 +35,7 @@ typedef struct spg_snap {
     int64_t next_rng_tick;
     uint32_t rng_tick_count;
     unsigned __int128 vblank_start_as;
+    coop_t coop;            /* two-player state (coop.c) */
 } spg_snap_t;
 
 void spg_snapshot(const spg_t *m, spg_snap_t *s);

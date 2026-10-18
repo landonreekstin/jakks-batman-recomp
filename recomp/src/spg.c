@@ -260,7 +260,8 @@ static uint16_t bus_read(void *ctx, uint32_t addr)
 {
     spg_t *m = ctx;
     const uint32_t a = addr & 0x3fffff;
-    if (m->watch && a >= m->watch_rlo && a <= m->watch_rhi && a != unsp_lpc(&m->cpu))
+    if (m->watch && (!m->watch_fn || m->watch_in) && a >= m->watch_rlo && a <= m->watch_rhi
+        && a != unsp_lpc(&m->cpu))
         fprintf(m->watch, "%u R %06x %06x %04x\n", m->frame + 1, unsp_lpc(&m->cpu), a, spg_peek(m, a));
     if (a < 0x2800) return m->ram[a];
     if (a >= 0x2900 && a < 0x3000) return m->vram[a - 0x2900];
@@ -290,7 +291,7 @@ static void bus_write(void *ctx, uint32_t addr, uint16_t data)
 {
     spg_t *m = ctx;
     const uint32_t a = addr & 0x3fffff;
-    if (m->watch && a >= m->watch_wlo && a <= m->watch_whi)
+    if (m->watch && (!m->watch_fn || m->watch_in) && a >= m->watch_wlo && a <= m->watch_whi)
         fprintf(m->watch, "%u W %06x %06x %04x\n", m->frame + 1, unsp_lpc(&m->cpu), a, data);
     if (a < 0x2800) { m->ram[a] = data; return; }
     if (a >= 0x2900 && a < 0x3000) { m->vram[a - 0x2900] = data; return; }
@@ -405,6 +406,11 @@ int spg_run_frame(spg_t *m, FILE *trace, uint64_t *trace_budget)
                 unsp_check_irqs(&m->cpu); /* the hook stood in for an instruction */
                 continue;
             }
+        }
+        if (m->watch_fn) {
+            const uint16_t sp = m->cpu.r[REG_SP];
+            if (!m->watch_in && unsp_lpc(&m->cpu) == m->watch_fn) { m->watch_in = 1; m->watch_sp = sp; }
+            else if (m->watch_in && sp > m->watch_sp) m->watch_in = 0;
         }
         if (trace && *trace_budget) {
             spg_trace_line(m, trace);

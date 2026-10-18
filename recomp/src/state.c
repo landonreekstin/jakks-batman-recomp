@@ -9,7 +9,7 @@
 #include "sha256.h"
 
 #define STATE_MAGIC "BATSTATE"
-#define STATE_VERSION 1
+#define STATE_VERSION 2   /* 2: co-op state */
 
 typedef struct state_header {
     char magic[8];
@@ -47,6 +47,7 @@ void spg_snapshot(const spg_t *m, spg_snap_t *s)
     s->next_rng_tick = m->next_rng_tick;
     s->rng_tick_count = m->rng_tick_count;
     s->vblank_start_as = m->vblank_start_as;
+    s->coop = m->coop;
 }
 
 void spg_restore(spg_t *m, const spg_snap_t *s)
@@ -80,6 +81,7 @@ void spg_restore(spg_t *m, const spg_snap_t *s)
     m->next_rng_tick = s->next_rng_tick;
     m->rng_tick_count = s->rng_tick_count;
     m->vblank_start_as = s->vblank_start_as;
+    m->coop = s->coop;
     if (m->render) spg_render(m);
 }
 

@@ -78,6 +78,11 @@ static void api_hook(uint32_t addr, batman_hook_fn fn, void *user)
     hook_map[addr >> 3] |= (uint8_t)(1 << (addr & 7));
 }
 
+void mods_hook(uint32_t addr, int (*fn)(spg_t *m, void *user), void *user)
+{
+    api_hook(addr, fn, user);
+}
+
 static void api_on_frame(batman_frame_fn fn, void *user)
 {
     if (n_frame_fns == MAX_FRAME_FNS) { fprintf(stderr, "mod: too many frame callbacks\n"); return; }
