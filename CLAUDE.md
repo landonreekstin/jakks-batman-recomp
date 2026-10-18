@@ -115,6 +115,14 @@ ping and the last rollback. Rewind, state loads, fast forward and recording are 
 The guest's save file is left alone. The guest keeps retrying until the host is up (and after the host quits); the host listens again when player 2 leaves. `batman-rt --host/--join` does the same headless (for
 `tests/net.sh`).
 
+**Packaged** in nixos-config (`pkgs/batman`, pinned to a commit of this repo on GitHub, and
+`modules/nixos/programs/batman.nix`): `batman [play|coop|host|join [ip]]` plus start-menu
+entries. The launcher downloads the ROM from the NAS public drop on first run and generates
+Robin's sprites into `~/.local/share/batman`. gaming-pc hosts. Blaney's blaney-pc joins
+`192.168.1.76:7845`, which optiplex-fw forwards to gaming-pc over wg-nas. Hosts that play
+together must be on the same pin, so after changing netplay or the game, push here and bump
+the pin (nixos-config `docs/companion-repos.md`).
+
 `--record tests/inputs/<name>.txt` writes the session as an input script, so real play
 becomes a MAME comparison: `INPUT=tests/inputs/<name>.txt tests/check.sh <workdir> <vblanks>`
 (the last line of the script gives the vblank count). Recordings start from a blank EEPROM,
