@@ -16,6 +16,7 @@ typedef struct coop {
     int enabled;
     uint16_t buttons2;        /* P2's controller, port A layout (bits 8..15) */
     uint16_t prev2;           /* P2's held buttons last time its update ran */
+    uint16_t pressed2;        /* P2's newly pressed buttons this frame */
     int active;               /* P2 exists in the current level */
     int seen;                 /* the player's update ran in this pass of the object loop */
     int lives_set;            /* p2_lives has been given its starting value */
@@ -31,6 +32,7 @@ typedef struct coop {
     int p2_lives;             /* P2's own lives (P1's are the game's, RAM 0x2099) */
     int p2_down;              /* frames until P2 comes back (0: in play) */
     int p2_out;               /* P2 has no lives left */
+    int p2_door;              /* P1 is going through a door; P2 rejoins it on the other side */
     uint16_t game_state;      /* RAM 0x2706 last frame (0x0A: P1 dying, 4: restarting) */
     uint8_t target[COOP_TARGETS]; /* each pool object's player: 0 P1, 1 P2 */
     int16_t last_x[2];

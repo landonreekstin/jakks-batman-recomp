@@ -30,6 +30,13 @@
  * Co-op runs only in levels with the brawler HUD; elsewhere (menus, Fast Lane) nothing is touched.
  * An object-loop pass without the player ends P2's level; the next one starts it again.
  *
+ * Doors: a door object's collision handler (0x065314) opens on X and, once open, starts the
+ * player's walk through it (object word 6 -> DOOR_WALK) on the door's direction, reading the
+ * buttons from PAD_HELD/PAD_PRESSED; P2's collision pass puts P2's buttons there. The walk moves the
+ * player into the next room. Whoever starts it, P1 walks through: if it is P2, P1 takes over P2's
+ * object (keeping its own health and special) and P2 steps out. P2 rejoins beside P1 when the walk
+ * is over (word 6 back to the normal update).
+ *
  * The camera: the player update calls the camera follow (0x00C695) with the player's position.
  * P1's call gets the midpoint of the two players instead; P2's returns at once. The leash keeps
  * the two at most LEASH pixels apart, so both stay on screen.
@@ -111,6 +118,8 @@
 #define LIVES 0x2099
 #define GAME_STATE 0x2706  /* 0 playing, 0x0A the player is dying, 4 restarting at a checkpoint */
 #define LOSE_LIFE 0x0DD43C /* called when health would go below 0: a life, or Game Over */
+
+#define DOOR_WALK 0x5D80   /* object word 6 while the player walks through a door: {0x06, 0x528A} */
 
 #define SPAWN_BEHIND 40    /* P2 starts this far left of P1 */
 #define P2_RESPAWN 180     /* frames P2 is out after losing a life */
@@ -251,7 +260,7 @@ static int pick_target(spg_t *m, int slot, uint16_t node)
 
 static int p2_in_play(const coop_t *c)
 {
-    return c->active && !c->p2_down && !c->p2_out;
+    return c->active && !c->p2_down && !c->p2_out && !c->p2_door;
 }
 
 /* P2 as a fresh copy of P1 (state, animation) next to it, with full health */
@@ -278,6 +287,33 @@ static int on_obj_loop(spg_t *m, void *user)
     return 0;
 }
 
+/* P2 back beside P1 after a door: P1's state, as the walk left it in the new room, with P2's
+ * health and special */
+static void rejoin_p2(spg_t *m)
+{
+    coop_t *c = &m->coop;
+    uint16_t keep[3] = {c->p2[CTX_HEALTH], c->p2[CTX_SPECIAL], c->p2[CTX_SPECIAL + 1]};
+    uint16_t addrs[COOP_CTX_MAX];
+    const int n = ctx_words(c, addrs);
+    for (int i = 0; i < n; i++) c->p2[i] = m->ram[addrs[i]];
+    c->p2[CTX_HEALTH] = keep[0];
+    c->p2[CTX_SPECIAL] = keep[1];
+    c->p2[CTX_SPECIAL + 1] = keep[2];
+    move_x(m, 1, (int16_t)(*word(m, 0, POS_X) - SPAWN_BEHIND));
+    c->last_x[0] = (int16_t)*word(m, 0, POS_X);
+    c->last_x[1] = (int16_t)*word(m, 1, POS_X);
+    c->p2_door = 0;
+}
+
+/* P2 started walking through a door (P2's words are swapped out): P1 takes it over */
+static void p2_door(spg_t *m)
+{
+    coop_t *c = &m->coop;
+    if (c->p2[6 - CTX_FIRST] != DOOR_WALK) return;
+    for (int i = CTX_FIRST; i <= CTX_LAST; i++) m->ram[(uint16_t)(c->base + i)] = c->p2[i - CTX_FIRST];
+    c->p2_door = 1;
+}
+
 static int on_dispatch(spg_t *m, void *user)
 {
     (void)user;
@@ -291,6 +327,9 @@ static int on_dispatch(spg_t *m, void *user)
         if (c->game_state == 4 && m->ram[GAME_STATE] == 0 && !c->p2_out) respawn_p2(m);
         c->game_state = m->ram[GAME_STATE];
         if (c->p2_down && --c->p2_down == 0) respawn_p2(m);
+        if (m->ram[(uint16_t)(node + 6)] == DOOR_WALK) {
+            if (!c->p2_down && !c->p2_out) c->p2_door = 1;
+        } else if (c->p2_door) rejoin_p2(m);
         redirect_return(m, TRAMP_P2);
         c->phase = 1;
         return 0;
@@ -373,7 +412,8 @@ static int on_p2(spg_t *m, void *user)
     c->keep[1] = m->ram[PAD_PRESSED];
     const uint16_t held = c->buttons2 & 0xFFF0;
     m->ram[PAD_HELD] = held;
-    m->ram[PAD_PRESSED] = held & (uint16_t)~c->prev2;
+    c->pressed2 = held & (uint16_t)~c->prev2;
+    m->ram[PAD_PRESSED] = c->pressed2;
     c->prev2 = held;
 
     /* call P2's update as the object loop does: push the return (PC, then SR), then load SR
@@ -417,6 +457,7 @@ static int on_done(spg_t *m, void *user)
     m->ram[PAD_HELD] = c->keep[0];
     m->ram[PAD_PRESSED] = c->keep[1];
     m->ram[PAL_TABLE + BATMAN_PAL_ID] = c->keep[2];
+    p2_door(m);
     for (int i = 0; i < 16; i++) /* colour 0 too: transparency is bit 15 of the colour */
         m->vram[0x2B00 - 0x2900 + P2_PAL_BANK * 16 + i] = m->rom[P2_PAL_ROM + i];
     if (p2_in_play(c)) leash(m);
@@ -563,6 +604,10 @@ static int on_coll(spg_t *m, void *user)
     if (c->coll_n == -1) { /* P1's pass returned: set up P2's */
         if (!c->coll_ran) goto done;
         swap_in_p2(m);
+        c->keep[0] = m->ram[PAD_HELD]; /* handlers read the buttons (doors) */
+        c->keep[1] = m->ram[PAD_PRESSED];
+        m->ram[PAD_HELD] = c->buttons2 & 0xFFF0;
+        m->ram[PAD_PRESSED] = c->pressed2;
         c->phase = 4;
         c->coll_n = 0;
         uint16_t n = m->ram[(uint16_t)(m->ram[0x26FA] + 2)];
@@ -617,6 +662,9 @@ static int on_coll(spg_t *m, void *user)
         return 1;
     }
     swap_out_p2(m);
+    m->ram[PAD_HELD] = c->keep[0];
+    m->ram[PAD_PRESSED] = c->keep[1];
+    p2_door(m);
 done:
     c->phase = 0;
     c->coll_n = 0;

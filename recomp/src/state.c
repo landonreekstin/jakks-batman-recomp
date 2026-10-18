@@ -9,7 +9,7 @@
 #include "sha256.h"
 
 #define STATE_MAGIC "BATSTATE"
-#define STATE_VERSION 3   /* 2: co-op state; 3: its per-level addresses */
+#define STATE_VERSION 4   /* 2: co-op state; 3: its per-level addresses; 4: doors */
 
 typedef struct state_header {
     char magic[8];

@@ -104,6 +104,19 @@ It doesn't write health (0x01E9) or lives (0x2099); enemies and the HUD objects 
   the palette id. The frame list follows at +0x0C. Drawing (0x00BC8A) reads through 0x0DC492 with
   the bank base 05:1C40 in [0x26EE:0x26EF].
 
+## Doors (detective levels)
+
+- A door is an object (update 0x065229) whose collision handler, 0x065314(door, player), does two
+  things:
+  - it **opens** the door on X held (0x080A & 0x0100) while the player is in its box, on the ground
+    ([+0x22] = [+0x29]) and [+0x36] = 0;
+  - **once it is open** ([0x2709] = 1) it starts the walk on the door's direction, door word 0x21:
+    0 = Up pressed, 1 = Right held, 2 = Down pressed, 3 = Left held (0x080B/0x080A). The walk is
+    0x07E98E(player, 0x5D80): the player's word 6 becomes 0x5D80 → 0x06528A, the door walk.
+- The walk (about 13 frames in *Search for a Smile*) moves the player into the next room (0x0DB51D,
+  0x00C63E) and sets word 6 back to 0x5D82 → 0x008BF7.
+- Both read the buttons from the global pad words, not from the player.
+
 ## How co-op works (recomp/src/coop.c)
 
 - **Finding the objects.** The player is the object at [0x270A] − 0x20, and only in a level where
@@ -131,6 +144,10 @@ never runs. All of the state is in `spg_t.coop` and in save states.
 - **Deaths.** 0x0DD43C with P2's words in RAM takes one of P2's lives: P2 is out for 3 s, then
   comes back beside P1 with full health, or stays out with none left. P1's deaths are the game's,
   and the checkpoint restart brings P2 along.
+- **Doors.** P2's collision pass has P2's buttons in 0x080A/0x080B, so P2 can open a door and walk in.
+  Whoever starts the walk, P1 walks through: if P2's word 6 becomes 0x5D80, P1 takes over P2's object
+  words (keeping P1's own health and special). P2 is out of play during the walk and rejoins beside P1
+  afterwards, with P1's state from the new room and P2's own health and special.
 - **Camera and leash.** The camera follow (0x00C695) aims at the midpoint; P2's call returns at
   once. The leash keeps the players at most 272 px apart.
 - **Look.** While P2's words are in RAM, sprite-bank reads (0x0DC492 at 05:1C40) go to 25:1C40,
@@ -144,8 +161,8 @@ never runs. All of the state is in `spg_t.coop` and in save states.
 - **P2's HUD** shows Batman's lives heads.
 - **P2 dies at once:** no knockdown animation, and no blinking on respawn.
 - **Robin's melee range and Birdarang:** these are code patches, so P2 has Batman's.
-- **Doors and scene changes** inside a level are untested. In *Search for a Smile*, P1 or P2 pressing
-  X or Up at the first door (its OPEN prompt showing) didn't open it; it may need a clue first.
+- **Doors** are checked only at the first door of *Search for a Smile*. Rooms entered in other ways
+  (Street Party's sections, scripted scene changes) haven't been checked with P2.
 - **Pool objects** run with P2's words in RAM when they target P2, including non-enemies (level
   objects such as 0x0DB492). Harmless so far, but a level object that moves the player would move P2.
 - **Fast Lane (driving):** P2 is not there yet.
