@@ -117,7 +117,19 @@ It doesn't write health (0x01E9) or lives (0x2099); enemies and the HUD objects 
   0x00C63E) and sets word 6 back to 0x5D82 → 0x008BF7.
 - Both read the buttons from the global pad words, not from the player.
 
-## How co-op works (recomp/src/coop.c)
+## Searching (detective levels)
+
+- A searchable object (the desk in Cell Block A) has word 6 = 0x5DA1 → update 0x07F37C at all times,
+  and handler 0x5D9D → 0x07F4DF.
+- **The handler:**
+  - it sets the touching player's word 0x41 to 9 (the prompt, "A LARGE DESK"; the player update
+    clears 0x41 every frame, and doors set it too);
+  - on X pressed (0x080B) it starts the search.
+- **The update** reads X held (0x080A, at 0x07F52E). It sets word 0x2F nonzero (9) while searching,
+  with a progress bar ("SEARCHING THE DESK") and a sound (0x53).
+- When the bar is full, the object goes away and the message shows with [0x2706] = 5 (busy). A
+  button closes it, and [0x2706] goes back to 0.
+
 
 - **Finding the objects.** The player is the object at [0x270A] − 0x20, and only in a level where
   [0x2708] − 0x20 runs the brawler HUD (0x0DD3D6) and [0x2705] − 0x20 the special meter (0x07FF39).
@@ -148,6 +160,18 @@ never runs. All of the state is in `spg_t.coop` and in save states.
   Whoever starts the walk, P1 walks through: if P2's word 6 becomes 0x5D80, P1 takes over P2's object
   words (keeping P1's own health and special). P2 is out of play during the walk and rejoins on P1's spot
   (in front of the door; an offset could put P2 off the map), with P1's state from the new room and P2's own health and special.
+- **Searching: one search at a time.**
+  - **Who searches.** The searcher is the player the searchable object follows when its word 0x2F
+    turns on, since its update reads that player's buttons. Pool objects that follow P2 run with
+    P2's buttons in the pad words.
+  - **While it runs:**
+    - every searchable object follows the searcher;
+    - searchable objects are hidden from the other player's collision pass (categories zeroed
+      around it), so the other player can't cancel the search or start a second one;
+    - otherwise the other player moves and fights.
+  - **During the message,** the other player gets no buttons, and only the searcher's buttons
+    close it. If the searcher is P2, the game's pad words get P2's buttons outside P1's update.
+- **Spawning.** P2 starts a level and respawns on P1's spot. An offset could put P2 off the map.
 - **Camera and leash.** The camera follow (0x00C695) aims at the midpoint; P2's call returns at
   once. The leash keeps the players at most 272 px apart.
 - **Look.** While P2's words are in RAM, sprite-bank reads (0x0DC492 at 05:1C40) go to 25:1C40,
@@ -159,6 +183,7 @@ never runs. All of the state is in `spg_t.coop` and in save states.
 - **P1 dying while P2 is alive** still restarts both at the checkpoint; the plan was for P1 to
   respawn in place. P1 out of lives is Game Over even if P2 has lives.
 - **P2's HUD** shows Batman's lives heads.
+- **Robin has no back-turned pose** for searching and doors (his frames come from the staff fighter).
 - **P2 dies at once:** no knockdown animation, and no blinking on respawn.
 - **Robin's melee range and Birdarang:** these are code patches, so P2 has Batman's.
 - **Doors** are checked only at the first door of *Search for a Smile*. Rooms entered in other ways

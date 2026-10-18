@@ -28,11 +28,16 @@ typedef struct coop {
     uint16_t ret_sr, ret_pc;  /* where the game's call of the player update returns to */
     uint16_t p1[COOP_CTX_MAX];   /* P1's words while P2's are swapped in */
     uint16_t p2[COOP_CTX_MAX];   /* P2's words while P1's are in RAM */
-    uint16_t keep[8];         /* shared words P2's update must not change (camera) */
+    uint16_t keep[8];         /* game words saved around P2's turns (pad, palette entry, lives) */
     int p2_lives;             /* P2's own lives (P1's are the game's, RAM 0x2099) */
     int p2_down;              /* frames until P2 comes back (0: in play) */
     int p2_out;               /* P2 has no lives left */
     int p2_door;              /* P1 is going through a door; P2 rejoins it on the other side */
+    int searcher;             /* 0, or the player (1, 2) whose search is running */
+    uint16_t prev_g2;         /* P2's held buttons last frame, for the game's own pad words */
+    /* searchable objects hidden from the other player's collision pass while a search runs */
+    int n_masked;
+    uint16_t masked[8], masked_is[8], masked_hits[8];
     uint16_t game_state;      /* RAM 0x2706 last frame (0x0A: P1 dying, 4: restarting) */
     uint8_t target[COOP_TARGETS]; /* each pool object's player: 0 P1, 1 P2 */
     int16_t last_x[2];

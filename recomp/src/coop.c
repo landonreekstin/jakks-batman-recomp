@@ -37,6 +37,14 @@
  * object (keeping its own health and special) and P2 steps out. P2 rejoins on P1's spot, in front
  * of the door, when the walk is over (word 6 back to the normal update).
  *
+ * Searching: holding X at a searchable object (word 6 = SEARCHABLE) starts a search (its word
+ * SEARCH_ON nonzero) with a progress bar, then a message ([GAME_STATE] = 5) waits for a button.
+ * The searcher is the player the object followed when it started (its update reads that player's
+ * buttons), until the search is over and the message closed. One search at a time: meanwhile searchable objects are hidden from the other player's
+ * collision pass (which also kept cancelling the search) and follow the searcher, but the other
+ * player can move and fight. During the message both are frozen and only the searcher's buttons
+ * count: if that is P2, the game's own pad words get P2's buttons and P1's update gets none.
+ *
  * The camera: the player update calls the camera follow (0x00C695) with the player's position.
  * P1's call gets the midpoint of the two players instead; P2's returns at once. The leash keeps
  * the two at most LEASH pixels apart, so both stay on screen.
@@ -119,9 +127,11 @@
 #define GAME_STATE 0x2706  /* 0 playing, 0x0A the player is dying, 4 restarting at a checkpoint */
 #define LOSE_LIFE 0x0DD43C /* called when health would go below 0: a life, or Game Over */
 
+#define SEARCHABLE 0x5DA1  /* a searchable object's word 6: {0x07, 0xF37C} */
+#define SEARCH_ON 0x2F     /* its word, nonzero while it is being searched */
+#define SEARCH_MESSAGE 5   /* GAME_STATE while the search result is shown */
 #define DOOR_WALK 0x5D80   /* object word 6 while the player walks through a door: {0x06, 0x528A} */
 
-#define SPAWN_BEHIND 40    /* P2 starts this far left of P1 */
 #define P2_RESPAWN 180     /* frames P2 is out after losing a life */
 #define LEASH 272          /* the most the players can be apart: one screen (320) minus margins */
 
@@ -226,12 +236,11 @@ static void redirect_return(spg_t *m, uint32_t tramp)
 
 static void start_level(spg_t *m)
 {
-    /* P2 starts as a copy of P1, a little behind */
+    /* P2 starts as a copy of P1, on its spot (anywhere else could be off the map) */
     coop_t *c = &m->coop;
     uint16_t addrs[COOP_CTX_MAX];
     const int n = ctx_words(c, addrs);
     for (int i = 0; i < n; i++) c->p2[i] = m->ram[addrs[i]];
-    move_x(m, 1, (int16_t)(*word(m, 0, POS_X) - SPAWN_BEHIND));
     c->active = 1;
     c->prev2 = c->buttons2 & 0xFFF0;
     c->last_x[0] = (int16_t)*word(m, 0, POS_X);
@@ -263,17 +272,91 @@ static int p2_in_play(const coop_t *c)
     return c->active && !c->p2_down && !c->p2_out && !c->p2_door;
 }
 
-/* P2 as a fresh copy of P1 (state, animation) next to it, with full health */
+/* P2 as a fresh copy of P1 (state, animation) on its spot, with full health */
 static void respawn_p2(spg_t *m)
 {
     coop_t *c = &m->coop;
     uint16_t addrs[COOP_CTX_MAX];
     const int n = ctx_words(c, addrs);
     for (int i = 0; i < n; i++) c->p2[i] = m->ram[addrs[i]];
-    move_x(m, 1, (int16_t)(*word(m, 0, POS_X) - SPAWN_BEHIND));
     *health(m, 1) = HEALTH_FULL;
     c->last_x[1] = (int16_t)*word(m, 1, POS_X);
     c->p2_down = 0;
+}
+
+/* the searchable objects in the update list (up to max), and whether one is being searched */
+static int searchables(spg_t *m, uint16_t *out, int max, int *running)
+{
+    int k = 0;
+    *running = 0;
+    uint16_t n = m->ram[(uint16_t)(m->ram[0x26FA] + 2)];
+    for (int guard = 0; n && n < 0x2800 - SEARCH_ON && guard < 64; guard++) {
+        const uint16_t fp = m->ram[n + 6];
+        if (fp == 0) break;
+        if (fp == SEARCHABLE) {
+            if (m->ram[n + SEARCH_ON]) *running = 1;
+            if (k < max) out[k++] = n;
+        }
+        n = m->ram[n + 2];
+    }
+    return k;
+}
+
+static int search_running(spg_t *m)
+{
+    uint16_t tmp[1];
+    int running;
+    searchables(m, tmp, 0, &running);
+    return running;
+}
+
+/* hides the searchable objects from the collision pass about to run (the non-searcher's) */
+static void mask_searchables(spg_t *m)
+{
+    coop_t *c = &m->coop;
+    int running;
+    c->n_masked = searchables(m, c->masked, 8, &running);
+    for (int i = 0; i < c->n_masked; i++) {
+        const uint16_t n = c->masked[i];
+        c->masked_is[i] = m->ram[n + OBJ_IS];
+        c->masked_hits[i] = m->ram[n + OBJ_HITS];
+        m->ram[n + OBJ_IS] = 0;
+        m->ram[n + OBJ_HITS] = 0;
+    }
+}
+
+static void unmask_searchables(spg_t *m)
+{
+    coop_t *c = &m->coop;
+    for (int i = 0; i < c->n_masked; i++) {
+        const uint16_t n = c->masked[i];
+        if (m->ram[n + 6] != SEARCHABLE) continue; /* removed by the pass */
+        m->ram[n + OBJ_IS] = c->masked_is[i];
+        m->ram[n + OBJ_HITS] = c->masked_hits[i];
+    }
+    c->n_masked = 0;
+}
+
+static int in_message(spg_t *m)
+{
+    return m->coop.searcher && m->ram[GAME_STATE] == SEARCH_MESSAGE;
+}
+
+/* has a search started? It is the player the object follows: its update reads that one's buttons */
+static void note_searcher(spg_t *m)
+{
+    coop_t *c = &m->coop;
+    if (c->searcher) return;
+    uint16_t n[8];
+    int running;
+    const int k = searchables(m, n, 8, &running);
+    for (int i = 0; i < k; i++) {
+        if (!m->ram[n[i] + SEARCH_ON]) continue;
+        const int slot = (n[i] - c->pool) / POOL_STRIDE;
+        c->searcher = n[i] >= c->pool && !((n[i] - c->pool) % POOL_STRIDE) && slot < COOP_TARGETS
+                      && p2_in_play(c) ? c->target[slot] + 1 : 1;
+        return;
+    }
 }
 
 /* a new pass of the object loop: if the last one had no player, the level is over for P2 */
@@ -284,6 +367,17 @@ static int on_obj_loop(spg_t *m, void *user)
     if (!c->enabled || c->phase) return 0;
     if (!c->seen) c->active = 0;
     c->seen = 0;
+    note_searcher(m); /* after last frame's object updates */
+    if (c->searcher && (!c->active || (!search_running(m) && m->ram[GAME_STATE] != SEARCH_MESSAGE)))
+        c->searcher = 0;
+    /* P2's search result: the game reads P2's buttons (P1's update gets none, below) */
+    const uint16_t held = c->buttons2 & 0xFFF0;
+    c->keep[7] = held & (uint16_t)~c->prev_g2; /* P2's presses this frame */
+    if (c->searcher == 2 && in_message(m)) {
+        m->ram[PAD_HELD] = held;
+        m->ram[PAD_PRESSED] = c->keep[7];
+    }
+    c->prev_g2 = held;
     return 0;
 }
 
@@ -329,6 +423,13 @@ static int on_dispatch(spg_t *m, void *user)
         if (m->ram[(uint16_t)(node + 6)] == DOOR_WALK) {
             if (!c->p2_down && !c->p2_out) c->p2_door = 1;
         } else if (c->p2_door) rejoin_p2(m);
+        c->keep[6] = c->searcher == 2 && in_message(m);
+        if (c->keep[6]) { /* P1 is frozen */
+            c->keep[4] = m->ram[PAD_HELD];
+            c->keep[5] = m->ram[PAD_PRESSED];
+            m->ram[PAD_HELD] = 0;
+            m->ram[PAD_PRESSED] = 0;
+        }
         redirect_return(m, TRAMP_P2);
         c->phase = 1;
         return 0;
@@ -342,8 +443,15 @@ static int on_dispatch(spg_t *m, void *user)
     }
     if (!p2_in_play(c) || node < c->pool || (node - c->pool) % POOL_STRIDE) return 0;
     const int slot = (node - c->pool) / POOL_STRIDE;
-    if (slot >= COOP_TARGETS || !pick_target(m, slot, node)) return 0;
+    if (slot >= COOP_TARGETS) return 0;
+    if (c->searcher && m->ram[node + 6] == SEARCHABLE) c->target[slot] = (uint8_t)(c->searcher - 1);
+    else pick_target(m, slot, node);
+    if (!c->target[slot]) return 0;
     swap_in_p2(m);
+    c->keep[0] = m->ram[PAD_HELD]; /* and P2's buttons (a search reads them) */
+    c->keep[1] = m->ram[PAD_PRESSED];
+    m->ram[PAD_HELD] = c->buttons2 & 0xFFF0;
+    m->ram[PAD_PRESSED] = c->keep[7];
     redirect_return(m, TRAMP_OBJ_DONE);
     c->phase = 3;
     return 0;
@@ -355,6 +463,8 @@ static int on_obj_done(spg_t *m, void *user)
     coop_t *c = &m->coop;
     if (c->phase != 3) return 0;
     swap_out_p2(m);
+    m->ram[PAD_HELD] = c->keep[0];
+    m->ram[PAD_PRESSED] = c->keep[1];
     m->cpu.r[REG_SR] = c->ret_sr;
     m->cpu.r[REG_PC] = c->ret_pc;
     m->cpu.cycles += 8;
@@ -398,6 +508,10 @@ static int on_p2(spg_t *m, void *user)
     (void)user;
     coop_t *c = &m->coop;
     if (c->phase != 1) return 0;
+    if (c->keep[6]) {
+        m->ram[PAD_HELD] = c->keep[4];
+        m->ram[PAD_PRESSED] = c->keep[5];
+    }
     if (!p2_in_play(c)) { /* P2 is out: back to the object loop */
         m->cpu.r[REG_SR] = c->ret_sr;
         m->cpu.r[REG_PC] = c->ret_pc;
@@ -409,7 +523,7 @@ static int on_p2(spg_t *m, void *user)
     m->ram[PAL_TABLE + BATMAN_PAL_ID] = P2_ATTR;
     c->keep[0] = m->ram[PAD_HELD];
     c->keep[1] = m->ram[PAD_PRESSED];
-    const uint16_t held = c->buttons2 & 0xFFF0;
+    const uint16_t held = c->searcher == 1 && in_message(m) ? 0 : c->buttons2 & 0xFFF0; /* P1's result */
     m->ram[PAD_HELD] = held;
     c->pressed2 = held & (uint16_t)~c->prev2;
     m->ram[PAD_PRESSED] = c->pressed2;
@@ -535,10 +649,11 @@ static int on_coll_pass(spg_t *m, void *user)
     const uint16_t sp = m->cpu.r[REG_SP];
     c->coll_ret_sr = m->ram[(uint16_t)(sp + 1)];
     c->coll_ret_pc = m->ram[(uint16_t)(sp + 2)];
+    c->coll_n = -1; /* P1's pass is running */
+    if (c->searcher == 2) mask_searchables(m); /* P2's search: P1 can't touch it, or start another */
     m->ram[(uint16_t)(sp + 1)] = (uint16_t)((c->coll_ret_sr & ~0x3f) | (TRAMP_COLL >> 16));
     m->ram[(uint16_t)(sp + 2)] = TRAMP_COLL & 0xFFFF;
     c->coll_ran = 0;
-    c->coll_n = -1; /* P1's pass is running */
     return 0;
 }
 
@@ -601,8 +716,10 @@ static int on_coll(spg_t *m, void *user)
     coop_t *c = &m->coop;
     uint16_t *r = m->cpu.r;
     if (c->coll_n == -1) { /* P1's pass returned: set up P2's */
+        unmask_searchables(m);
         if (!c->coll_ran) goto done;
         swap_in_p2(m);
+        if (c->searcher == 1) mask_searchables(m);
         c->keep[0] = m->ram[PAD_HELD]; /* handlers read the buttons (doors) */
         c->keep[1] = m->ram[PAD_PRESSED];
         m->ram[PAD_HELD] = c->buttons2 & 0xFFF0;
@@ -660,6 +777,7 @@ static int on_coll(spg_t *m, void *user)
         coll_call(m, BOX_TEST, 0, c->coll_a, c->coll_b);
         return 1;
     }
+    unmask_searchables(m);
     swap_out_p2(m);
     m->ram[PAD_HELD] = c->keep[0];
     m->ram[PAD_PRESSED] = c->keep[1];
