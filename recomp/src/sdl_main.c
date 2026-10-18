@@ -18,6 +18,12 @@
  * <save file minus .sav>.cfg.
  * It only scales what goes to the speakers; the emulated sound is unchanged.
  *
+ * Netplay (net.h; implies --coop): --host [PORT] waits for player 2 (port 7845) while the game
+ *       runs; --join ADDR[:PORT] joins a host as player 2, from the host's game. Each plays with
+ *       P1's keys or any controller. --net-delay N sets the input delay (frames, 2). Rewind, state
+ *       loads, fast forward and recording are off while connected, and the guest never writes its
+ *       save file (its game is the host's).
+ *
  * --record writes the controller state as an input script (tests/inputs format), so
  * the session can be replayed in MAME and batman-rt by tests/check.sh. A recording
  * starts from a blank EEPROM, like the MAME capture, and saves to <script>.sav.
@@ -34,6 +40,7 @@
 #include "crt.h"
 #include "osd.h"
 #include "mod.h"
+#include "net.h"
 #include "png.h"
 #include "rom.h"
 #include "spg.h"
@@ -195,6 +202,19 @@ static void save_config(const char *path, int filter)
     fclose(f);
 }
 
+/* netplay runs the frames (net.h): render and sound only when asked */
+static void net_run(void *ctx, spg_t *m, int render, int audio)
+{
+    (void)ctx;
+    m->render = render;
+    audio_mute = !audio;
+    spg_run_frame(m, NULL, NULL);
+    mods_frame(m);
+    audio_flush();
+    audio_mute = 0;
+    m->render = 1;
+}
+
 /* the next free <base>-NNNN.png */
 static int screenshot(const char *base, const uint32_t *px, int w, int h, char *path, size_t pathlen)
 {
@@ -210,7 +230,9 @@ int main(int argc, char **argv)
 {
     const char *rom_path = NULL;
     char save_path[1024] = "";
-    int scale = 3, filter = -1, volume_arg = -1, coop = 0;
+    int scale = 3, filter = -1, volume_arg = -1, coop = 0, host_port = 0;
+    const char *join = NULL;
+    net_opts_t net_o = { 2, 0, 0, 0 };
     long max_frames = -1;
     const char *record_path = NULL, *mod_list = NULL, *mods_dir = "mods";
     for (int i = 1; i < argc; i++) {
@@ -221,6 +243,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
         else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
         else if (!strcmp(argv[i], "--coop")) coop = 1;
+        else if (!strcmp(argv[i], "--host")) {
+            host_port = NET_PORT;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') host_port = atoi(argv[++i]);
+        }
+        else if (!strcmp(argv[i], "--join") && i + 1 < argc) join = argv[++i];
+        else if (!strcmp(argv[i], "--net-delay") && i + 1 < argc) net_o.delay = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--volume") && i + 1 < argc) {
             volume_arg = atoi(argv[++i]);
             if (volume_arg < 0 || volume_arg > 100) { fprintf(stderr, "--volume takes 0-100\n"); return 2; }
@@ -235,8 +263,12 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100] [--coop]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100] [--coop] [--host [port] | --join addr[:port]] [--net-delay N]\n", argv[0]);
         return 2;
+    }
+    if (host_port || join) {
+        coop = 1;
+        if (record_path) { fprintf(stderr, "--record doesn't work with netplay\n"); return 2; }
     }
     FILE *rec = NULL;
     if (record_path) {
@@ -285,6 +317,21 @@ int main(int argc, char **argv)
     uint8_t rom_hash[32];
     mods_content_id(rom, rom_hash);
     int slot = 0;
+    netplay_t *net = NULL;
+    int net_on = 0, net_over = 0;   /* playing with the peer; the guest's game ended with the host's */
+    if (host_port) net = net_host(host_port, &net_o);
+    else if (join) {
+        char addr[256];
+        int port = NET_PORT;
+        snprintf(addr, sizeof(addr), "%s", join);
+        char *c = strrchr(addr, ':');
+        if (addr[0] == '[') {   /* [v6]:port */
+            char *e = strchr(addr, ']');
+            if (e) { *e = 0; if (e[1] == ':') port = atoi(e + 2); memmove(addr, addr + 1, strlen(addr)); }
+        } else if (c && c == strchr(addr, ':')) { *c = 0; port = atoi(c + 1); }
+        net = net_join(addr, port, &net_o, rom_hash);
+    }
+    if ((host_port || join) && !net) return 1;
     spg_reset(&m);
     mods_reset(&m);
     m.render = 1;
@@ -334,6 +381,10 @@ int main(int argc, char **argv)
             else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
                 char path[1100];
                 snprintf(path, sizeof(path), "%s.st%d", base, slot);
+                if (net && (e.key.keysym.sym == SDLK_F8 || (join && e.key.keysym.sym == SDLK_F5))) {
+                    osd("Not while playing online");
+                    continue;
+                }
                 switch (e.key.keysym.sym) {
                 case SDLK_F5:
                     if (spg_state_save(&m, rom_hash, path)) osd("Saved state %d", slot);
@@ -385,8 +436,29 @@ int main(int argc, char **argv)
         }
 
         const Uint8 *keys = SDL_GetKeyboardState(NULL);
-        const int ff = keys[SDL_SCANCODE_TAB];
-        if (keys[SDL_SCANCODE_BACKSPACE]) {
+        const int ff = keys[SDL_SCANCODE_TAB] && !net;
+        if (net) {
+            /* the host plays on its own until player 2 joins; the guest waits for the host's game */
+            if (!net_on) {
+                const int r = join ? net_wait_start(net, &m) : net_accept(net, &m, rom_hash);
+                if (r > 0) net_on = 1;
+                else if (r < 0) { net_close(net); net = NULL; net_over = 1; }
+            }
+            if (net_on) {
+                const uint16_t b = key_buttons(0) | pad_buttons(pads[0]) | pad_buttons(pads[1]);
+                if (net_tick(net, &m, b, 0, net_run, NULL) < 0) {
+                    net_close(net);
+                    net = NULL;
+                    net_on = 0;
+                    net_over = join != NULL;   /* the guest's game was the host's: it stops */
+                }
+                if (host_port && m.frame % 300 == 0) save_eeprom(&m, save_path);
+            }
+        }
+        for (const char *ev; net && (ev = net_event(net));) osd("%s", ev);
+        if (net_over || (net && (net_on || join))) {
+            /* netplay drives the frames (above), or the guest waits or has stopped */
+        } else if (keys[SDL_SCANCODE_BACKSPACE]) {
             /* rewind: step back one snapshot per displayed frame (REWIND_EVERY x speed), silently */
             const uint32_t was = m.frame;
             if (rewind_pop(&m)) {
@@ -434,6 +506,10 @@ int main(int argc, char **argv)
             shot = 0;
         }
         if (ff) osd_text(outbuf, ow, oh, ow - 16 * 6 * 3 - 24, 24, 3, ">> fast forward");
+        if (net && net_on) osd_text(outbuf, ow, oh, 16, oh - 16 - 7 * 2, 2, net_status(net));
+        else if (net && join) osd_text(outbuf, ow, oh, 24, oh / 2, 3, "Waiting for the host's game...");
+        else if (net) osd_text(outbuf, ow, oh, 16, oh - 16 - 7 * 2, 2, "Waiting for player 2 to join");
+        if (net_over) osd_text(outbuf, ow, oh, 24, oh / 2, 3, "The game ended (Esc quits)");
         if (keys[SDL_SCANCODE_BACKSPACE]) osd_text(outbuf, ow, oh, ow - 16 * 6 * 3 - 24, 24, 3, "<< rewind");
         if (osd_left > 0) {
             osd_text(outbuf, ow, oh, 24, 24, 3, osd_msg);
@@ -452,7 +528,8 @@ int main(int argc, char **argv)
         if (audio_dev && SDL_GetQueuedAudioSize(audio_dev) > (Uint32)(SPU_RATE / 60 * 4 * 4)) SDL_Delay(4);
     }
 
-    save_eeprom(&m, save_path);
+    if (!join) save_eeprom(&m, save_path);   /* the guest's EEPROM was the host's */
+    net_close(net);
     if (rec) stop_recording(&rec, record_path, m.frame);
     for (int i = 0; i < 2; i++)
         if (pads[i]) SDL_GameControllerClose(pads[i]);

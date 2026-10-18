@@ -58,8 +58,13 @@ PPU/SPU work.
   541,817 reads match, and 14/14 snapshots are pixel-identical. Each side of the capture is about 1.7 GB.
 - **Co-op prototype** (`recomp/src/coop.c`): local two-player brawler and detective levels (Street Party and *Search for a Smile* checked; P2 = Robin
   with `mods/robin-p2`). Driving levels stay single player. Single player is unchanged, and session2 still matches MAME. Co-op runs repeat
-  identically and survive save/load. Next: P1 respawning in place while P2 lives, the driving
-  levels, and netplay (plan in `notes/coop.md`).
+  identically and survive save/load.
+- **Netplay** (`recomp/src/net.c`, `notes/netplay.md`): online co-op, host = P1, guest = P2, with
+  rollback. The guest joins from the host's state at any time, and desyncs are found by a state hash
+  every second and fixed by resending the host's state. `tests/net.sh` (loopback with simulated
+  latency, jitter and loss): host and guest end identically, the settled inputs replay offline to
+  the same state, and a knocked-off guest is resynced. Not yet tried between two machines. Next: P1
+  respawning in place while P2 lives, and the driving levels (plan in `notes/coop.md`).
 - Not done: static recompiler (code is still interpreted).
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.
 
@@ -75,6 +80,8 @@ PPU/SPU work.
   (about 93k instructions per frame).
 - `tests/state.sh <workdir> [save-at] [frames]` (env `INPUT`): save-state round trip, also
   compared with MAME when `<workdir>/mame` holds a capture with the same input.
+- `tests/net.sh <workdir> [start] [frames] [lat,jitter,loss%]`: netplay over loopback, in real time
+  (see Status).
 - `tools/mame/capture.lua` makes the MAME reference. `tests/compare.py` does the diffs.
 - `tools/ghidra/SeedAndExport.java`: headless Ghidra pass, exports the function list.
 
@@ -98,6 +105,15 @@ keyboard). Add `--mods robin-p2` to make P2 Robin. P2 is a second copy of the pl
 RAM around a second run of the player update. It also takes part in the enemies' targeting, the collision
 pass and the HUD (at the bottom of the screen), and has its own lives and respawn. The camera follows the
 midpoint, with a leash. Native only. Input scripts take an optional second mask for P2.
+
+**Online** (`notes/netplay.md`): the host runs `batman target/batman.bin --mods robin-p2 --host`
+(port 7845, TCP and UDP; `--host 9000` for another) and plays as P1. Player 2 runs
+`batman target/batman.bin --mods robin-p2 --join <host address>[:port]` and joins the host's game as
+Robin, from wherever it is. Both need the same build, ROM and mods. Each player uses P1's keys or a
+controller. `--net-delay N` sets the input delay (2 frames). The status line at the bottom shows the
+ping and the last rollback. Rewind, state loads, fast forward and recording are off while connected.
+The guest's save file is left alone. `batman-rt --host/--join` does the same headless (for
+`tests/net.sh`).
 
 `--record tests/inputs/<name>.txt` writes the session as an input script, so real play
 becomes a MAME comparison: `INPUT=tests/inputs/<name>.txt tests/check.sh <workdir> <vblanks>`

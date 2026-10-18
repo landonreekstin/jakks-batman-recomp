@@ -15,6 +15,15 @@
  *             [--romcov out.bin] ROM usage map: per ROM-space word a byte of SPG_COV_* bits, then
  *                                its first vblank as u32 (tools/romcov.py reads it)
  *             [--bake out.bin]   write the ROM file with the mods' patches applied, for MAME
+ *             [--hash]           print a hash of the final state (spg_snap_hash)
+ *             [--host PORT | --join ADDR[:PORT]]   netplay (net.h), implies --coop: the host is P1
+ *                                and starts from its state (--state-load or the reset), the guest
+ *                                joins from it. Each plays its own column of --input (the host
+ *                                the first mask, the guest the second) at 60 Hz (--fps N), up to
+ *                                --frames N, then waits until both have every input and exits.
+ *                                [--net-delay N] input delay (2), [--net-sim LAT,JITTER,LOSS%]
+ *                                a simulated network (ms), [--net-log f] the settled inputs as an
+ *                                input script, [--net-start f] the starting state, for replays
  *             [--watch out.txt spec] log CPU accesses as "vblank W|R pc addr value"; spec is a
  *                                comma list of w:LO-HI (writes), r:LO-HI (data reads), from:N
  *                                and to:N (vblanks), fn:ADDR (only inside calls of the function at
@@ -30,10 +39,13 @@
 #include "coop.h"
 #include "crt.h"
 #include "mod.h"
+#include "net.h"
 #include "png.h"
 #include "rom.h"
 #include "spg.h"
 #include "state.h"
+
+#include <time.h>
 
 static FILE *dump_out;
 static FILE *wav_out;
@@ -139,6 +151,87 @@ static void dump_frame(spg_t *m)
     fwrite(m->vram, 2, 0x700, dump_out);
 }
 
+/* the script's buttons for one player at frame f (the last line at or before f) */
+static uint16_t script_at(uint32_t f, int p2)
+{
+    int lo = 0, hi = n_inputs;   /* first line after f */
+    while (lo < hi) {
+        const int mid = (lo + hi) / 2;
+        if (inputs[mid].frame <= f) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo ? (p2 ? inputs[lo - 1].mask2 : inputs[lo - 1].mask) : 0;
+}
+
+static uint32_t net_corrupt_at;   /* test: BATMAN_NET_CORRUPT=frame moves P1 in this process only */
+
+static void net_run(void *ctx, spg_t *m, int render, int audio)
+{
+    (void)ctx; (void)render; (void)audio;
+    spg_run_frame(m, NULL, NULL);
+    mods_frame(m);
+    if (m->frame == net_corrupt_at && m->ram[0x270A] && m->ram[0x270A] < 0x2800)
+        m->ram[m->ram[0x270A]] += 8;   /* the player's X */
+}
+
+static void sleep_until(struct timespec *t, long ns)
+{
+    t->tv_nsec += ns;
+    while (t->tv_nsec >= 1000000000L) { t->tv_nsec -= 1000000000L; t->tv_sec++; }
+    clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, t, NULL);
+}
+
+/* two processes play together; see the usage at the top */
+static int run_netplay(spg_t *m, const uint8_t rom_hash[32], int host_port, const char *join,
+                       const net_opts_t *o, unsigned frames, int fps, const char *log_path, const char *start_path)
+{
+    netplay_t *n;
+    if (join) {
+        char addr[256];
+        int port = NET_PORT;
+        snprintf(addr, sizeof(addr), "%s", join);
+        char *c = strrchr(addr, ':');
+        if (addr[0] == '[') {   /* [v6]:port */
+            char *e = strchr(addr, ']');
+            if (e) { *e = 0; if (e[1] == ':') port = atoi(e + 2); memmove(addr, addr + 1, strlen(addr)); }
+        } else if (c && c == strchr(addr, ':')) { *c = 0; port = atoi(c + 1); }
+        n = net_join(addr, port, o, rom_hash);
+    } else n = net_host(host_port, o);
+    if (!n) return 0;
+    int r;
+    while ((r = join ? net_wait_start(n, m) : net_accept(n, m, rom_hash)) == 0) {
+        const struct timespec t = { 0, 5000000 };
+        nanosleep(&t, NULL);
+    }
+    if (r < 0) { fprintf(stderr, "net: %s\n", net_status(n)); net_close(n); return 0; }
+    if (start_path && !spg_state_save(m, rom_hash, start_path)) { net_close(n); return 0; }
+    FILE *log = NULL;
+    if (log_path) {
+        if (!(log = fopen(log_path, "w"))) { perror(log_path); net_close(n); return 0; }
+        net_log_inputs(n, log);
+    }
+    const int p2 = !net_is_host(n);
+    if (getenv("BATMAN_NET_CORRUPT")) net_corrupt_at = (uint32_t)atoi(getenv("BATMAN_NET_CORRUPT"));
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    int ok = 1, linger = 0;
+    for (;;) {
+        const uint16_t local = script_at(net_input_frame(n), p2);
+        r = net_tick(n, m, local, frames, net_run, NULL);
+        if (net_settled(n, m, frames)) {
+            if (++linger > fps) break;   /* a second more, so the peer surely has our last acks */
+        } else if (r < 0) {
+            fprintf(stderr, "net: %s\n", net_status(n));
+            ok = 0;
+            break;
+        }
+        sleep_until(&t, 1000000000L / fps);
+    }
+    if (log) fclose(log);
+    net_close(n);
+    return ok;
+}
+
 /* the patched ROM as a file MAME can run; MAME mirrors the file, so a patched upper half is lost */
 static int bake_rom(const uint16_t *rom, const char *path)
 {
@@ -158,7 +251,9 @@ int main(int argc, char **argv)
     const char *rom_path = NULL, *replay = NULL, *iolog = NULL, *dump = NULL, *trace_path = NULL;
     unsigned frames = 600;
     uint64_t trace_instr = 0;
-    int coop = 0;
+    int coop = 0, print_hash = 0, host_port = 0, fps = 60;
+    const char *join = NULL, *net_log = NULL, *net_start = NULL;
+    net_opts_t net_o = { 2, 0, 0, 0 };
     const char *state_save = NULL, *state_load = NULL, *mod_list = NULL, *mods_dir = "mods", *bake = NULL, *romcov = NULL;
     const char *watch = NULL, *watch_spec = NULL;
     FILE *watch_out = NULL;
@@ -180,6 +275,15 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--state-load") && i + 1 < argc) state_load = argv[++i];
         else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
         else if (!strcmp(argv[i], "--coop")) coop = 1;
+        else if (!strcmp(argv[i], "--hash")) print_hash = 1;
+        else if (!strcmp(argv[i], "--host") && i + 1 < argc) host_port = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--join") && i + 1 < argc) join = argv[++i];
+        else if (!strcmp(argv[i], "--net-delay") && i + 1 < argc) net_o.delay = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--net-sim") && i + 1 < argc)
+            sscanf(argv[++i], "%d,%d,%d", &net_o.lat_ms, &net_o.jitter_ms, &net_o.loss_pct);
+        else if (!strcmp(argv[i], "--net-log") && i + 1 < argc) net_log = argv[++i];
+        else if (!strcmp(argv[i], "--net-start") && i + 1 < argc) net_start = argv[++i];
+        else if (!strcmp(argv[i], "--fps") && i + 1 < argc) fps = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
         else if (!strcmp(argv[i], "--bake") && i + 1 < argc) bake = argv[++i];
         else if (!strcmp(argv[i], "--romcov") && i + 1 < argc) romcov = argv[++i];
@@ -214,6 +318,7 @@ int main(int argc, char **argv)
 
     static spg_t m;
     spg_init(&m, rom);
+    if (host_port || join) coop = 1;
     if (coop) coop_attach(&m);
     mods_attach(&m);
     if (romcov) {
@@ -256,7 +361,11 @@ int main(int argc, char **argv)
     }
 
     int ok = 1;
-    while (m.frame < frames) {
+    if (host_port || join) {
+        m.on_frame = NULL;   /* the inputs come from net.c */
+        ok = run_netplay(&m, rom_hash, host_port, join, &net_o, frames, fps > 0 ? fps : 60, net_log, net_start);
+    }
+    while (!host_port && !join && m.frame < frames) {
         if (state_save && m.frame == state_save_at && !spg_state_save(&m, rom_hash, state_save)) return 1;
         if (watch_out) m.watch = m.frame + 1 >= watch_from && m.frame + 1 <= watch_to ? watch_out : NULL;
         if (!spg_run_frame(&m, trace, &trace_instr)) { ok = 0; break; }
@@ -273,6 +382,11 @@ int main(int argc, char **argv)
                 fprintf(stderr, "  model differs from MAME at %04X: %u reads\n", 0x2800 + a, m.model_mismatch[a]);
     }
     fprintf(stderr, "ran %u frames, %lld cycles, pc %06x\n", m.frame, (long long)m.cpu.cycles, unsp_lpc(&m.cpu));
+    if (print_hash) {
+        static spg_snap_t s;
+        spg_snapshot(&m, &s);
+        printf("state %016llx at frame %u\n", (unsigned long long)spg_snap_hash(&s), m.frame);
+    }
     if (romcov) {
         FILE *f = fopen(romcov, "wb");
         if (!f || fwrite(m.romcov, 1, ROM_SPACE_WORDS, f) != ROM_SPACE_WORDS ||

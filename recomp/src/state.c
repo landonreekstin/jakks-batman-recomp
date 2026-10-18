@@ -87,6 +87,25 @@ void spg_restore(spg_t *m, const spg_snap_t *s)
     if (m->render) spg_render(m);
 }
 
+static uint64_t fnv(uint64_t h, const void *p, size_t len)
+{
+    const uint8_t *b = p;
+    for (size_t i = 0; i < len; i++) h = (h ^ b[i]) * 0x100000001B3ull;
+    return h;
+}
+
+uint64_t spg_snap_hash(const spg_snap_t *s)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    h = fnv(h, s->ram, sizeof(s->ram));
+    h = fnv(h, s->vram, sizeof(s->vram));
+    h = fnv(h, s->vregs, sizeof(s->vregs));
+    h = fnv(h, s->coop.p2, sizeof(s->coop.p2));
+    h = fnv(h, &s->coop.p2_lives, sizeof(s->coop.p2_lives));
+    h = fnv(h, &s->frame, sizeof(s->frame));
+    return h;
+}
+
 void spg_rom_hash(const uint16_t *rom, uint8_t out[32])
 {
     sha256_t s;
