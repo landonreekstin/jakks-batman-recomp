@@ -13,8 +13,13 @@
  *
  *   - collisions are a separate pass after the object loop (COLL_PASS): pairs of objects, each
  *     told about the other through its handler (object word 7); the player's applies damage. P2
- *     is not in the game's lists, so after P1's pass a second one runs with P2's words in RAM,
- *     over the pairs that include the player only (see coll_next).
+ *     is not in the game's lists, so after P1's pass P2's words go into RAM and each object is
+ *     tested against the player the way 0x0DD0AD tests a pair (on_coll).
+ *
+ *   - deaths: when P2's health runs out (LOSE_LIFE with P2's words in RAM), P2 loses one of its
+ *     own lives and is out of play for P2_RESPAWN frames, then comes back beside P1 with full
+ *     health; with none left it stays out. P1's death is the game's own (a checkpoint restart),
+ *     and P2 is put back beside P1 when it happens.
  *
  * The camera: the player update calls the camera follow (0x00C695) with the player's position.
  * P1's call gets the midpoint of the two players instead; P2's returns at once. The leash keeps
@@ -58,9 +63,17 @@
 
 #define COLL_PASS 0x0DD16D      /* collisions: 0x0DD0AD(A) for every object A in the update list */
 #define COLL_PASS_RUN 0x0DD177  /* reached only when the pass isn't skipped */
-#define COLL_PAIRS 0x0DD0AD     /* A against the objects after it in the chain through word 0, sorted by word 4 */
-#define OBJ_NEXT_X 0           /* that chain */
-#define OBJ_LEFT 4             /* its sort key */
+#define BOX_TEST 0x00B83D      /* (A, B): do their frames' boxes meet */
+/* the object words 0x0DD0AD tests a pair (A before B in x) with */
+#define OBJ_LEFT 4             /* x of the left edge (the chain through word 0 is sorted by it) */
+#define OBJ_Y 0x16
+#define OBJ_LO 0x17            /* x extent: [0x19] - [0x17] */
+#define OBJ_H 0x18
+#define OBJ_HI 0x19
+#define OBJ_DEPTH 0x1A
+#define OBJ_IS 0x1C            /* collision categories it is, */
+#define OBJ_HITS 0x1D          /* and those it reacts to */
+#define OBJ_HANDLER 7          /* far pointer to its collision handler (self, other) */
 
 #define PAD_HELD 0x080A    /* buttons held (port A & 0xFFF0), written by 0x0DD77F */
 #define PAD_PRESSED 0x080B /* newly pressed this frame */
@@ -70,7 +83,14 @@
 #define POS_X_COPY 0x0191  /* copied from POS_X by the update; what enemies read */
 #define POS_X_OLD 0x01C1   /* another copy */
 
+#define HEALTH 0x01E9     /* 0..0x20 */
+#define HEALTH_FULL 0x20
+#define LIVES 0x2099
+#define GAME_STATE 0x2706  /* 0 playing, 0x0A the player is dying, 4 restarting at a checkpoint */
+#define LOSE_LIFE 0x0DD43C /* called when health would go below 0: a life, or Game Over */
+
 #define SPAWN_BEHIND 40    /* P2 starts this far left of P1 */
+#define P2_RESPAWN 180     /* frames P2 is out after losing a life */
 #define LEASH 272          /* the most the players can be apart: one screen (320) minus margins */
 
 /* P2's state: the player object minus its list links (0x017C-0x017F), health, special */
@@ -166,6 +186,8 @@ static void start_level(spg_t *m)
     c->last_x[0] = (int16_t)m->ram[POS_X];
     c->last_x[1] = (int16_t)*word(m, 1, POS_X);
     memset(c->target, 0, sizeof(c->target));
+    if (!c->p2_lives && !c->p2_out) c->p2_lives = m->ram[LIVES]; /* the first level: as many as P1 */
+    c->p2_down = 0;
 }
 
 /* which player an object goes after: the nearer one, sticking with its choice unless the
@@ -182,6 +204,24 @@ static int pick_target(spg_t *m, int slot, uint16_t node)
     return c->target[slot] = (uint8_t)t;
 }
 
+static int p2_in_play(const coop_t *c)
+{
+    return c->active && !c->p2_down && !c->p2_out;
+}
+
+/* P2 as a fresh copy of P1 (state, animation) next to it, with full health */
+static void respawn_p2(spg_t *m)
+{
+    coop_t *c = &m->coop;
+    uint16_t addrs[COOP_CTX_MAX];
+    const int n = ctx_words(addrs);
+    for (int i = 0; i < n; i++) c->p2[i] = m->ram[addrs[i]];
+    move_x(m, 1, (int16_t)(m->ram[POS_X] - SPAWN_BEHIND));
+    *word(m, 1, HEALTH) = HEALTH_FULL;
+    c->last_x[1] = (int16_t)*word(m, 1, POS_X);
+    c->p2_down = 0;
+}
+
 static int on_dispatch(spg_t *m, void *user)
 {
     (void)user;
@@ -190,11 +230,17 @@ static int on_dispatch(spg_t *m, void *user)
     const uint16_t node = m->ram[(uint16_t)(m->cpu.r[REG_SP] + 3)];
     if (node == PLAYER_NODE) {
         if (!c->active || c->level != m->ram[LEVEL_ID]) start_level(m);
+        /* P1 restarted at a checkpoint: P2 comes along */
+        if (c->game_state == 4 && m->ram[GAME_STATE] == 0 && !c->p2_out) respawn_p2(m);
+        c->game_state = m->ram[GAME_STATE];
+        if (getenv("COOP_DEBUG") && m->frame % 30 == 0)
+            fprintf(stderr, "%u dispatch player: state %x fn %04x lvl %x active %d down %d out %d phase %d\n", m->frame, m->ram[GAME_STATE], m->ram[PLAYER_NODE + 6], m->ram[LEVEL_ID], c->active, c->p2_down, c->p2_out, c->phase);
+        if (c->p2_down && --c->p2_down == 0) respawn_p2(m);
         redirect_return(m, TRAMP_P2);
         c->phase = 1;
         return 0;
     }
-    if (!c->active || node < POOL_FIRST || (node - POOL_FIRST) % POOL_STRIDE) return 0;
+    if (!p2_in_play(c) || node < POOL_FIRST || (node - POOL_FIRST) % POOL_STRIDE) return 0;
     const int slot = (node - POOL_FIRST) / POOL_STRIDE;
     if (slot >= COOP_TARGETS || !pick_target(m, slot, node)) return 0;
     swap_in_p2(m);
@@ -229,6 +275,7 @@ static int on_camera(spg_t *m, void *user)
         m->cpu.cycles += 8;
         return 1;
     }
+    if (!p2_in_play(c)) return 0;
     const uint16_t sp = r[REG_SP]; /* [sp+1] SR, [sp+2] PC, then the arguments */
     const int x1 = (int16_t)m->ram[(uint16_t)(sp + 3)], y1 = (int16_t)m->ram[(uint16_t)(sp + 4)];
     const int x2 = (int16_t)*word(m, 1, POS_X), y2 = (int16_t)*word(m, 1, POS_Y);
@@ -251,6 +298,12 @@ static int on_p2(spg_t *m, void *user)
     (void)user;
     coop_t *c = &m->coop;
     if (c->phase != 1) return 0;
+    if (!p2_in_play(c)) { /* P2 is out: back to the object loop */
+        m->cpu.r[REG_SR] = c->ret_sr;
+        m->cpu.r[REG_PC] = c->ret_pc;
+        c->phase = 0;
+        return 1;
+    }
     swap_in_p2(m);
     c->keep[2] = m->ram[PAL_TABLE + BATMAN_PAL_ID];
     m->ram[PAL_TABLE + BATMAN_PAL_ID] = P2_ATTR;
@@ -304,13 +357,30 @@ static int on_done(spg_t *m, void *user)
     m->ram[PAL_TABLE + BATMAN_PAL_ID] = c->keep[2];
     for (int i = 0; i < 16; i++) /* colour 0 too: transparency is bit 15 of the colour */
         m->vram[0x2B00 - 0x2900 + P2_PAL_BANK * 16 + i] = m->rom[P2_PAL_ROM + i];
-    leash(m);
+    if (p2_in_play(c)) leash(m);
     if (getenv("COOP_DEBUG") && m->frame % 60 == 0)
-        fprintf(stderr, "%u P1 x %d hp %d | P2 x %d hp %d fn %04x | targets %d\n", m->frame, (int16_t)m->ram[POS_X], m->ram[0x01E9], (int16_t)*word(m, 1, POS_X), *word(m, 1, 0x01E9), *word(m, 1, 0x0182), (int)(c->target[0]+c->target[1]+c->target[2]+c->target[3]+c->target[4]+c->target[5]+c->target[6]+c->target[7]+c->target[8]+c->target[9]+c->target[10]));
+        fprintf(stderr, "%u P1 x %d hp %d lives %d | P2 x %d hp %d lives %d down %d out %d | targets %d\n", m->frame, (int16_t)m->ram[POS_X], m->ram[0x01E9], m->ram[LIVES], (int16_t)*word(m, 1, POS_X), *word(m, 1, 0x01E9), c->p2_lives, c->p2_down, c->p2_out, (int)(c->target[0]+c->target[1]+c->target[2]+c->target[3]+c->target[4]+c->target[5]+c->target[6]+c->target[7]+c->target[8]+c->target[9]+c->target[10]));
     m->cpu.r[REG_SR] = c->ret_sr;
     m->cpu.r[REG_PC] = c->ret_pc;
     m->cpu.cycles += 8;
     c->phase = 0;
+    return 1;
+}
+
+/* P2's health ran out (P2's words are in RAM): one of P2's lives instead of the game's */
+static int on_lose_life(spg_t *m, void *user)
+{
+    (void)user;
+    coop_t *c = &m->coop;
+    if (c->phase < 2) return 0; /* P1: the game's own */
+    if (c->p2_lives > 0) {
+        c->p2_lives--;
+        c->p2_down = P2_RESPAWN;
+    } else c->p2_out = 1;
+    uint16_t *r = m->cpu.r; /* retf */
+    r[REG_SR] = m->ram[++r[REG_SP]];
+    r[REG_PC] = m->ram[++r[REG_SP]];
+    m->cpu.cycles += 8;
     return 1;
 }
 
@@ -320,7 +390,7 @@ static int on_coll_pass(spg_t *m, void *user)
 {
     (void)user;
     coop_t *c = &m->coop;
-    if (!c->enabled || !c->active || c->phase) return 0;
+    if (!c->enabled || !p2_in_play(c) || c->phase) return 0;
     const uint16_t sp = m->cpu.r[REG_SP];
     c->coll_ret_sr = m->ram[(uint16_t)(sp + 1)];
     c->coll_ret_pc = m->ram[(uint16_t)(sp + 2)];
@@ -338,23 +408,52 @@ static int on_coll_run(spg_t *m, void *user)
     return 0;
 }
 
-/* undoes the link changes made for the call that just returned */
-static void coll_unpatch(spg_t *m)
+/* still in the object list? (a handler can remove objects) */
+static int linked(spg_t *m, uint16_t node)
 {
-    coop_t *c = &m->coop;
-    if (c->coll_a != PLAYER_NODE) {
-        m->ram[c->coll_a + OBJ_NEXT_X] = c->coll_a0;
-        m->ram[PLAYER_NODE + OBJ_NEXT_X] = c->coll_p0;
-    } else {
-        m->ram[PLAYER_NODE + OBJ_NEXT_X] = c->coll_p0;
-        if (c->coll_pred) m->ram[c->coll_pred + OBJ_NEXT_X] = c->coll_pred0;
+    uint16_t n = m->ram[(uint16_t)(m->ram[0x26FA] + 2)];
+    for (int guard = 0; n && n < 0x2800 && guard < 64; guard++) {
+        if (spg_peek(m, (uint16_t)(n + 6)) == 0) return 0;
+        if (n == node) return 1;
+        n = m->ram[n + 2];
     }
+    return 0;
 }
 
-/* The P2 pass makes the calls in coll_list one at a time, each returning here. An object A
- * before P2 (by word 4) is called with its chain cut to just the player; then the player itself,
- * with its chain starting at the first object after P2's position and P1's place in the chain
- * skipped. So every pair with the player is tested once and no other pair again. */
+/* 0x0DD0AD's tests before the box test, for A before B in x */
+static int near_pair(spg_t *m, uint16_t a, uint16_t b)
+{
+    const uint16_t *w = m->ram;
+    const int width = (int16_t)(w[a + OBJ_HI] - w[a + OBJ_LO]);
+    if ((int16_t)(w[b + OBJ_LEFT] - w[a + OBJ_LEFT]) > width) return 0;
+    if (!(w[b + OBJ_IS] & w[a + OBJ_HITS]) && !(w[b + OBJ_HITS] & w[a + OBJ_IS])) return 0;
+    const int dy = (int16_t)(w[b + OBJ_Y] + w[b + OBJ_H] - (w[a + OBJ_Y] + w[a + OBJ_H]));
+    if (dy > 0) return dy < (int16_t)w[a + OBJ_DEPTH];
+    return dy > -(int16_t)w[b + OBJ_DEPTH];
+}
+
+/* calls fn(x, y) (a near address, or a far pointer's target when far is set), returning to
+ * TRAMP_COLL */
+static void coll_call(spg_t *m, uint32_t fn, int far, uint16_t x, uint16_t y)
+{
+    uint16_t *r = m->cpu.r;
+    push(m, y);
+    push(m, x);
+    push(m, TRAMP_COLL & 0xFFFF);
+    push(m, (uint16_t)((r[REG_SR] & ~0x3f) | (TRAMP_COLL >> 16)));
+    if (far) {
+        r[REG_SR] = spg_peek(m, (uint16_t)fn);
+        r[REG_PC] = spg_peek(m, (uint16_t)(fn + 1));
+    } else {
+        r[REG_SR] = (uint16_t)((r[REG_SR] & ~0x3f) | (fn >> 16));
+        r[REG_PC] = fn & 0xFFFF;
+    }
+    m->cpu.cycles += 9;
+}
+
+/* P2's collisions: for each object X, the pair (X, player) in x order, as 0x0DD0AD does it:
+ * the near test, then the box test (step 1), then A's handler if A reacts to B (step 2), then B's
+ * if B reacts to A (step 3). Each call returns here. */
 static int on_coll(spg_t *m, void *user)
 {
     (void)user;
@@ -364,62 +463,56 @@ static int on_coll(spg_t *m, void *user)
         if (!c->coll_ran) goto done;
         swap_in_p2(m);
         c->phase = 4;
-        const int p2x = (int16_t)m->ram[PLAYER_NODE + OBJ_LEFT];
         c->coll_n = 0;
         uint16_t n = m->ram[(uint16_t)(m->ram[0x26FA] + 2)];
         for (int guard = 0; n && n < 0x2800 && guard < 64; guard++) {
             if (spg_peek(m, (uint16_t)(n + 6)) == 0) break;
-            if (n != PLAYER_NODE && (int16_t)m->ram[n + OBJ_LEFT] <= p2x &&
-                c->coll_n < (int)(sizeof(c->coll_list) / sizeof(c->coll_list[0])) - 1)
+            if (n != PLAYER_NODE && c->coll_n < (int)(sizeof(c->coll_list) / sizeof(c->coll_list[0])))
                 c->coll_list[c->coll_n++] = n;
             n = m->ram[n + 2];
         }
-        c->coll_list[c->coll_n++] = PLAYER_NODE;
         c->coll_i = 0;
-        c->coll_calling = 0;
+        c->coll_step = 0;
+    } else if (c->coll_step) {
+        r[REG_SP] += 2; /* the two arguments */
     }
-    if (c->coll_calling) {
-        r[REG_SP]++; /* the argument */
-        coll_unpatch(m);
-        c->coll_calling = 0;
-    }
-    if (c->coll_i < c->coll_n) {
-        const uint16_t a = c->coll_list[c->coll_i++];
-        c->coll_a = a;
-        c->coll_p0 = m->ram[PLAYER_NODE + OBJ_NEXT_X];
-        if (a != PLAYER_NODE) {
-            c->coll_a0 = m->ram[a + OBJ_NEXT_X];
-            m->ram[a + OBJ_NEXT_X] = PLAYER_NODE;
-            m->ram[PLAYER_NODE + OBJ_NEXT_X] = 0;
-        } else {
-            /* the first object at or after P2's position, P1's place skipped */
-            const int p2x = (int16_t)m->ram[PLAYER_NODE + OBJ_LEFT];
-            uint16_t first = 0;
-            int best = 0x7FFF;
-            c->coll_pred = 0;
-            uint16_t n = m->ram[(uint16_t)(m->ram[0x26FA] + 2)];
-            for (int guard = 0; n && n < 0x2800 && guard < 64; guard++) {
-                if (spg_peek(m, (uint16_t)(n + 6)) == 0) break;
-                if (n != PLAYER_NODE) {
-                    const int x = (int16_t)m->ram[n + OBJ_LEFT];
-                    if (x > p2x && x < best) { best = x; first = n; }
-                    if (m->ram[n + OBJ_NEXT_X] == PLAYER_NODE) c->coll_pred = n;
-                }
-                n = m->ram[n + 2];
+    for (;;) {
+        const uint16_t a = c->coll_a, b = c->coll_b;
+        const uint16_t *w = m->ram;
+        switch (c->coll_step) {
+        case 1: /* the box test returned */
+            if (r[REG_R1] && (w[a + OBJ_HITS] & w[b + OBJ_IS]) && w[a + OBJ_HANDLER]) {
+                c->coll_step = 2;
+                coll_call(m, w[a + OBJ_HANDLER], 1, a, b);
+                return 1;
             }
-            if (c->coll_pred) {
-                c->coll_pred0 = m->ram[c->coll_pred + OBJ_NEXT_X];
-                m->ram[c->coll_pred + OBJ_NEXT_X] = c->coll_p0;
+            /* fall through */
+        case 2:
+            if (c->coll_step == 1 && !r[REG_R1]) break;
+            if ((w[b + OBJ_HITS] & w[a + OBJ_IS]) && w[b + OBJ_HANDLER]) {
+                c->coll_step = 3;
+                coll_call(m, w[b + OBJ_HANDLER], 1, b, a);
+                return 1;
             }
-            m->ram[PLAYER_NODE + OBJ_NEXT_X] = first;
+            break;
+        default:
+            break;
         }
-        push(m, a);
-        push(m, TRAMP_COLL & 0xFFFF);
-        push(m, (uint16_t)((r[REG_SR] & ~0x3f) | (TRAMP_COLL >> 16)));
-        r[REG_SR] = (uint16_t)((r[REG_SR] & ~0x3f) | (COLL_PAIRS >> 16));
-        r[REG_PC] = COLL_PAIRS & 0xFFFF;
-        m->cpu.cycles += 9;
-        c->coll_calling = 1;
+        c->coll_step = 0;
+        /* the next object */
+        uint16_t x = 0;
+        while (c->coll_i < c->coll_n) {
+            x = c->coll_list[c->coll_i++];
+            if (!linked(m, x)) continue;
+            const int before = (int16_t)w[x + OBJ_LEFT] <= (int16_t)w[PLAYER_NODE + OBJ_LEFT];
+            c->coll_a = before ? x : PLAYER_NODE;
+            c->coll_b = before ? PLAYER_NODE : x;
+            if (near_pair(m, c->coll_a, c->coll_b)) break;
+            x = 0;
+        }
+        if (!x) break;
+        c->coll_step = 1;
+        coll_call(m, BOX_TEST, 0, c->coll_a, c->coll_b);
         return 1;
     }
     swap_out_p2(m);
@@ -441,6 +534,7 @@ void coop_attach(spg_t *m)
     mods_hook(TRAMP_P2, on_p2, NULL);
     mods_hook(TRAMP_DONE, on_done, NULL);
     mods_hook(TRAMP_OBJ_DONE, on_obj_done, NULL);
+    mods_hook(LOSE_LIFE, on_lose_life, NULL);
     mods_hook(COLL_PASS, on_coll_pass, NULL);
     mods_hook(COLL_PASS_RUN, on_coll_run, NULL);
     mods_hook(TRAMP_COLL, on_coll, NULL);

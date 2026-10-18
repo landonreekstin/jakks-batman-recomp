@@ -23,15 +23,18 @@ typedef struct coop {
     uint16_t p1[COOP_CTX_MAX];   /* P1's words while P2's are swapped in */
     uint16_t p2[COOP_CTX_MAX];   /* P2's words while P1's are in RAM */
     uint16_t keep[8];         /* shared words P2's update must not change (camera) */
+    int p2_lives;             /* P2's own lives (P1's are the game's, RAM 0x2099) */
+    int p2_down;              /* frames until P2 comes back (0: in play) */
+    int p2_out;               /* P2 has no lives left */
+    uint16_t game_state;      /* RAM 0x2706 last frame (0x0A: P1 dying, 4: restarting) */
     uint8_t target[COOP_TARGETS]; /* each pool object's player: 0 P1, 1 P2 */
     int16_t last_x[2];
-    /* P2's collision pass (coop.c): the calls of 0x0DD0AD still to make, and the links patched for
-       the current one */
+    /* P2's collision pass (coop.c): the objects to test against the player, and where it is */
     int coll_ran;
     uint16_t coll_ret_sr, coll_ret_pc;
     uint16_t coll_list[COOP_TARGETS + 8];
-    int coll_n, coll_i, coll_calling;
-    uint16_t coll_a, coll_a0, coll_p0, coll_pred, coll_pred0;        /* both players' X after the previous frame's updates (leash) */
+    int coll_n, coll_i, coll_step;
+    uint16_t coll_a, coll_b;
 } coop_t;
 
 typedef struct spg spg_t;
