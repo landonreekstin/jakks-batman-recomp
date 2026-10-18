@@ -63,27 +63,72 @@ Writes measured over session1's Street Party (vblanks 3775–48600, `--watch w:0
 
 It doesn't write health (0x01E9) or lives (0x2099); enemies and the HUD objects do.
 
+## Collisions and damage
+
+- **The collision pass, 0x0DD16D.** It runs after the object loop and is skipped while 0x00F12F
+  says the game is busy. For each object A in the update list it calls 0x0DD0AD(A).
+- **How 0x0DD0AD tests a pair.** It walks the objects after A in a chain through word 0, sorted
+  by word 4 (left x). For each pair (A, B):
+  1. **Near:** stop if B is past A's width (word 0x19 − word 0x17).
+  2. **Categories:** skip unless the words 0x1C (what it is) and 0x1D (what it reacts to)
+     intersect.
+  3. **Y:** words 0x16 + 0x18, within word 0x1A.
+  4. **Box test:** 0x00B83D(A, B) on their frames' boxes.
+  5. **Handlers:** A's handler (far pointer in word 7) as (A, B), then B's as (B, A), each only
+     if it reacts.
+- **The player's handler is 0x0090B5.** Being hit ends in 0x0DD458(−2), the health change:
+  - it adds the change to [[0x2708] + 1] = 0x01E9, scaled by difficulty when negative;
+  - below 0 it calls 0x0DD43C, which takes a life (0x2099) and sets 0x2706 = 0x0A (dying), or
+    calls Game Over (0x07FAE1).
+- **0x2706 is a game state:** 0x0A while the player is dying, then 4 (restart at the checkpoint,
+  0x0DB81F), then 0.
+- **0x0070D9 is the other direction:** an enemy taking damage from a player attack. It is called
+  from the enemy's own update, and sets [[0x270A] + 0x28] = 0x01C4, the player's hit-confirm flag.
+- **The HUD objects:**
+  - 0x01C8 (update 0x0DD3D6, which draws the health bar and the lives heads; health is its word
+    0x21 = 0x01E9);
+  - 0x0214 (update 0x07FF39, the special meter; 0x0244 is its word 0x30).
+- **The sprite list being built:** count at 0x20A0, entries of 4 words (tile, x, y, attr) from
+  0x20A3. Coordinates are centred, and y is up.
+- **Sprite palettes:** the table at RAM 0x2552 maps a palette id to a sprite attribute; 0xFFFF
+  means bank 8 + (id & 3). The id is in the character header in the sprite bank, word 1:
+  Batman 3 → 0x0E51 (bank 14). Bank 9 is unused in Street Party.
+- **Character header:** word 1 of the player's header (index [0x018B] = 8 → bank offset 0x2EFF) is
+  the palette id. The frame list follows at +0x0C. Drawing (0x00BC8A) reads through 0x0DC492 with
+  the bank base 05:1C40 in [0x26EE:0x26EF].
+
 ## How co-op works (recomp/src/coop.c)
 
-- **Hooks.** A hook at the entry of 0x008BF7 points the call's return address at a trampoline
-  (0x3FFF00, in the upper ROM copy, which the game never runs).
-- **The second update.** When P1's update returns there:
-  - P2's words go into RAM: 0x0180–0x01C7, 0x01E9, 0x0244/0x0245;
-  - P2's buttons go into 0x080A/0x080B;
-  - the update is called again, returning to 0x3FFF01;
-  - there P1's words come back.
-- **Camera.** The camera follow's entry is hooked. P1's call aims at the midpoint of the two
-  players; P2's returns at once.
-- **Leash.** After both updates, the players are kept at most 272 px apart. Whoever moved apart
-  is held back, using X and its copies.
-- **Spawn.** P2 starts as a copy of P1, 40 px behind, at the first player update of each level.
-- **Save states.** All of the state is in `spg_t.coop`, so save states keep it.
+All of it runs from PC hooks, with trampolines at 0x3FFF00+ in the upper ROM copy, which the game
+never runs. All of the state is in `spg_t.coop` and in save states.
+
+- **The object loop's dispatch (0x07E8BA)** sees every update call:
+  - **The player:** P1's call returns to a trampoline. There P2's words go into RAM (0x0180–0x01C7,
+    0x01E9, 0x0244/0x0245) with P2's buttons in 0x080A/0x080B. P2's own update (its word 6) is then
+    called, and P1's words come back afterwards.
+  - **Pool objects:** each targets the nearer player, with 32 px of hysteresis. For P2, P2's words
+    are in RAM during that object's update.
+  - **The HUD objects** run again with P2's words and lives, and their new sprites move to the
+    bottom of the screen.
+- **Collisions.** After P1's collision pass, P2's words go into RAM and every object is tested
+  against the player as 0x0DD0AD tests a pair. The chain links are not touched: a first version
+  that patched them hung the game when a handler removed an object.
+- **Deaths.** 0x0DD43C with P2's words in RAM takes one of P2's lives: P2 is out for 3 s, then
+  comes back beside P1 with full health, or stays out with none left. P1's deaths are the game's,
+  and the checkpoint restart brings P2 along.
+- **Camera and leash.** The camera follow (0x00C695) aims at the midpoint; P2's call returns at
+  once. The leash keeps the players at most 272 px apart.
+- **Look.** While P2's words are in RAM, sprite-bank reads (0x0DC492 at 05:1C40) go to 25:1C40,
+  the upper copy, where `mods/robin-p2` puts Robin's frames. His tiles are at tile 0xC000+.
+  Palette id 3 draws with bank 9, filled from the upper copy's palette every frame.
 
 ## Open
 
-- **Enemy targeting:** enemies read 0x0191/0x0192, which is P1. Their attack hit tests and
-  damage only reach P1.
-- **P2's own health, lives and HUD; death and respawn.**
-- **Robin's frame list and palette for P2.**
-- **Doors and scene changes.**
-- **The Fast Lane driving engine.**
+- **P1 dying while P2 is alive** still restarts both at the checkpoint; the plan was for P1 to
+  respawn in place. P1 out of lives is Game Over even if P2 has lives.
+- **P2's HUD** shows Batman's lives heads.
+- **P2 dies at once:** no knockdown animation, and no blinking on respawn.
+- **Robin's melee range and Birdarang:** these are code patches, so P2 has Batman's.
+- **Doors and scene changes** inside a level are untested.
+- **Fast Lane (driving):** P2 is not there yet.
+- **Netplay.**

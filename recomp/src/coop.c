@@ -21,6 +21,9 @@
  *     health; with none left it stays out. P1's death is the game's own (a checkpoint restart),
  *     and P2 is put back beside P1 when it happens.
  *
+ *   - the HUD: the health/lives and special objects run a second time with P2's words (and
+ *     lives) in RAM, and the sprites they add are moved to the bottom of the screen.
+ *
  * The camera: the player update calls the camera follow (0x00C695) with the player's position.
  * P1's call gets the midpoint of the two players instead; P2's returns at once. The leash keeps
  * the two at most LEASH pixels apart, so both stay on screen.
@@ -31,7 +34,6 @@
  * second Batman. */
 #include "coop.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,6 +62,14 @@
 #define TRAMP_DONE 0x3FFF01
 #define TRAMP_OBJ_DONE 0x3FFF02
 #define TRAMP_COLL 0x3FFF03
+#define TRAMP_HUD 0x3FFF04
+#define TRAMP_HUD_DONE 0x3FFF05
+
+#define HUD_HEALTH_NODE 0x01C8  /* the health bar and lives */
+#define HUD_SPECIAL_NODE 0x0214 /* the special meter */
+#define SPRITE_COUNT 0x20A0     /* the sprite list being built: count, then 4 words each from 0x20A3 */
+#define SPRITE_LIST 0x20A3
+#define P2_HUD_DY (-196)        /* P2's HUD: P1's moved to the bottom of the screen (y is up) */
 
 #define COLL_PASS 0x0DD16D      /* collisions: 0x0DD0AD(A) for every object A in the update list */
 #define COLL_PASS_RUN 0x0DD177  /* reached only when the pass isn't skipped */
@@ -233,11 +243,15 @@ static int on_dispatch(spg_t *m, void *user)
         /* P1 restarted at a checkpoint: P2 comes along */
         if (c->game_state == 4 && m->ram[GAME_STATE] == 0 && !c->p2_out) respawn_p2(m);
         c->game_state = m->ram[GAME_STATE];
-        if (getenv("COOP_DEBUG") && m->frame % 30 == 0)
-            fprintf(stderr, "%u dispatch player: state %x fn %04x lvl %x active %d down %d out %d phase %d\n", m->frame, m->ram[GAME_STATE], m->ram[PLAYER_NODE + 6], m->ram[LEVEL_ID], c->active, c->p2_down, c->p2_out, c->phase);
         if (c->p2_down && --c->p2_down == 0) respawn_p2(m);
         redirect_return(m, TRAMP_P2);
         c->phase = 1;
+        return 0;
+    }
+    if ((node == HUD_HEALTH_NODE || node == HUD_SPECIAL_NODE) && c->active && !c->p2_out) {
+        redirect_return(m, TRAMP_HUD);
+        c->coll_a = node; /* free while the object loop runs */
+        c->phase = 5;
         return 0;
     }
     if (!p2_in_play(c) || node < POOL_FIRST || (node - POOL_FIRST) % POOL_STRIDE) return 0;
@@ -358,8 +372,6 @@ static int on_done(spg_t *m, void *user)
     for (int i = 0; i < 16; i++) /* colour 0 too: transparency is bit 15 of the colour */
         m->vram[0x2B00 - 0x2900 + P2_PAL_BANK * 16 + i] = m->rom[P2_PAL_ROM + i];
     if (p2_in_play(c)) leash(m);
-    if (getenv("COOP_DEBUG") && m->frame % 60 == 0)
-        fprintf(stderr, "%u P1 x %d hp %d lives %d | P2 x %d hp %d lives %d down %d out %d | targets %d\n", m->frame, (int16_t)m->ram[POS_X], m->ram[0x01E9], m->ram[LIVES], (int16_t)*word(m, 1, POS_X), *word(m, 1, 0x01E9), c->p2_lives, c->p2_down, c->p2_out, (int)(c->target[0]+c->target[1]+c->target[2]+c->target[3]+c->target[4]+c->target[5]+c->target[6]+c->target[7]+c->target[8]+c->target[9]+c->target[10]));
     m->cpu.r[REG_SR] = c->ret_sr;
     m->cpu.r[REG_PC] = c->ret_pc;
     m->cpu.cycles += 8;
@@ -381,6 +393,47 @@ static int on_lose_life(spg_t *m, void *user)
     r[REG_SR] = m->ram[++r[REG_SP]];
     r[REG_PC] = m->ram[++r[REG_SP]];
     m->cpu.cycles += 8;
+    return 1;
+}
+
+/* ---- P2's HUD --------------------------------------------------------------------------- */
+
+static int on_hud(spg_t *m, void *user)
+{
+    (void)user;
+    coop_t *c = &m->coop;
+    if (c->phase != 5) return 0;
+    uint16_t *r = m->cpu.r;
+    c->coll_b = m->ram[SPRITE_COUNT]; /* the sprites from here on are P2's */
+    swap_in_p2(m);
+    c->keep[3] = m->ram[LIVES];
+    m->ram[LIVES] = (uint16_t)c->p2_lives;
+    push(m, c->coll_a);
+    push(m, TRAMP_HUD_DONE & 0xFFFF);
+    push(m, (uint16_t)((r[REG_SR] & ~0x3f) | (TRAMP_HUD_DONE >> 16)));
+    const uint16_t fp = m->ram[c->coll_a + 6];
+    r[REG_SR] = spg_peek(m, fp);
+    r[REG_PC] = spg_peek(m, (uint16_t)(fp + 1));
+    m->cpu.cycles += 9;
+    c->phase = 6;
+    return 1;
+}
+
+static int on_hud_done(spg_t *m, void *user)
+{
+    (void)user;
+    coop_t *c = &m->coop;
+    if (c->phase != 6) return 0;
+    uint16_t *r = m->cpu.r;
+    r[REG_SP]++; /* the argument */
+    for (int i = c->coll_b; i < m->ram[SPRITE_COUNT] && i < 0x100; i++)
+        m->ram[SPRITE_LIST + 4 * i + 2] = (uint16_t)(m->ram[SPRITE_LIST + 4 * i + 2] + P2_HUD_DY);
+    m->ram[LIVES] = c->keep[3];
+    swap_out_p2(m);
+    r[REG_SR] = c->ret_sr;
+    r[REG_PC] = c->ret_pc;
+    m->cpu.cycles += 8;
+    c->phase = 0;
     return 1;
 }
 
@@ -535,6 +588,8 @@ void coop_attach(spg_t *m)
     mods_hook(TRAMP_DONE, on_done, NULL);
     mods_hook(TRAMP_OBJ_DONE, on_obj_done, NULL);
     mods_hook(LOSE_LIFE, on_lose_life, NULL);
+    mods_hook(TRAMP_HUD, on_hud, NULL);
+    mods_hook(TRAMP_HUD_DONE, on_hud_done, NULL);
     mods_hook(COLL_PASS, on_coll_pass, NULL);
     mods_hook(COLL_PASS_RUN, on_coll_run, NULL);
     mods_hook(TRAMP_COLL, on_coll, NULL);

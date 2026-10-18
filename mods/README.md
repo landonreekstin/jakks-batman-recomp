@@ -57,6 +57,10 @@ MODS=example-text INPUT=tests/inputs/level1-start.txt SNAPS=1500 tests/check.sh 
   `mod.txt` from the ROM (`make -C recomp` runs it). The output holds edited copies of the original
   art, so it is gitignored. It is all data, and checked against MAME. `notes/sprites.md` has the
   details.
+- `robin-p2`: the same Robin as co-op player 2, for `--coop`. It is written into the upper ROM copy,
+  which P2's sprites are read from (`recomp/src/coop.c`), so Batman stays P1. Don't also enable
+  `robin`, which replaces Batman. It is generated and gitignored like `robin`, and native only
+  (MAME has no co-op).
 - `example-lagmeter`: a plugin that hooks `wait_vblank` (0x005CDE) and counts lag frames on screen.
 - `tests/mods/retf-identity`: a test plugin. It replaces a RETF with `api->retf`, and the
   game must still match MAME exactly.

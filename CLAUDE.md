@@ -56,6 +56,10 @@ PPU/SPU work.
   `--record`. It covers 68,520 vblanks (19 min): the Street Party brawler level, then the
   Fast Lane Batcycle level to Level Completed. All frames are identical, all 20,586,666 peripheral writes and
   541,817 reads match, and 14/14 snapshots are pixel-identical. Each side of the capture is about 1.7 GB.
+- **Co-op prototype** (`recomp/src/coop.c`): local two-player Street Party (P2 = Robin with
+  `mods/robin-p2`). Single player is unchanged, and session2 still matches MAME. Co-op runs repeat
+  identically and survive save/load. Next: P1 respawning in place while P2 lives, the driving
+  levels, and netplay (plan in `notes/coop.md`).
 - Not done: static recompiler (code is still interpreted).
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.
 
@@ -87,6 +91,13 @@ F11 toggles fullscreen, F12 saves a screenshot of the filtered image to `target/
 remembered in `target/batman.cfg`, and `--volume 0-100` sets it at start. It only scales the output, so the
 emulation is unchanged.
 `batman-rt --filter <mode>` applies a filter to `--snap` PNGs.
+
+**Co-op** (`--coop`, `recomp/src/coop.c`, `notes/coop.md`): two players in the brawler levels. P2 uses
+W A S D, J = A, K = B, L = X, P = Menu, or the second controller (or the only one, while P1 keeps the
+keyboard). Add `--mods robin-p2` to make P2 Robin. P2 is a second copy of the player's state, swapped into
+RAM around a second run of the player update. It also takes part in the enemies' targeting, the collision
+pass and the HUD (at the bottom of the screen), and has its own lives and respawn. The camera follows the
+midpoint, with a leash. Native only. Input scripts take an optional second mask for P2.
 
 `--record tests/inputs/<name>.txt` writes the session as an input script, so real play
 becomes a MAME comparison: `INPUT=tests/inputs/<name>.txt tests/check.sh <workdir> <vblanks>`
