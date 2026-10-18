@@ -11,3 +11,4 @@ tests/mods/*/*.so
 __pycache__/
 tests/inputs/*.sav
 mods/robin/mod.txt
+mods/robin-p2/mod.txt

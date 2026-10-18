@@ -9,7 +9,11 @@
  *
  * The camera: the update calls the camera follow (0x00C695) with the player's position.
  * P1's call gets the midpoint of the two players instead; P2's returns at once. The
- * leash keeps the two at most LEASH pixels apart, so both stay on screen. */
+ * leash keeps the two at most LEASH pixels apart, so both stay on screen.
+ *
+ * P2's look: while P2's update runs, sprite-bank reads go to the upper ROM copy (where
+ * mods/robin-p2 puts Robin's frames and tiles), and Batman's palette id draws with bank 9, which
+ * gets P2's colours from the upper copy every frame. Without that mod P2 is a second Batman. */
 #include "coop.h"
 
 #include <stdlib.h>
@@ -20,6 +24,17 @@
 
 #define PLAYER_UPDATE 0x008BF7
 #define CAMERA_FOLLOW 0x00C695 /* camera follow (x, y, ...): centres on x - 160, eased */
+#define FAR_READ 0x0DC492      /* reads ds:[[0x26EF] + off] with DS = [0x26EE] */
+#define BANK_SEG 0x26EE
+#define BANK_OFF 0x26EF
+#define SPRITE_BANK_SEG 0x05   /* the sprite bank, 0x051C40 */
+#define SPRITE_BANK_OFF 0x1C40
+#define P2_BANK_SEG 0x25       /* P2's copy of it, in the upper ROM half (mods/robin-p2) */
+#define PAL_TABLE 0x2552       /* palette id -> sprite attribute (palette bank in bits 8-11) */
+#define BATMAN_PAL_ID 3
+#define P2_ATTR 0x0951         /* P2 draws with palette bank 9, free in the brawler levels */
+#define P2_PAL_BANK 9
+#define P2_PAL_ROM 0x251870    /* P2's 16 colours: Batman's palette in the upper copy */
 #define TRAMP_P2 0x3FFF00
 #define TRAMP_DONE 0x3FFF01
 
@@ -126,6 +141,15 @@ static int on_camera(spg_t *m, void *user)
     return 0;
 }
 
+/* P2's sprite-bank reads come from the upper ROM copy */
+static int on_far_read(spg_t *m, void *user)
+{
+    (void)user;
+    if (m->coop.phase == 2 && m->ram[BANK_SEG] == SPRITE_BANK_SEG && m->ram[BANK_OFF] == SPRITE_BANK_OFF)
+        m->ram[BANK_SEG] = P2_BANK_SEG;
+    return 0;
+}
+
 static int on_p2(spg_t *m, void *user)
 {
     (void)user;
@@ -137,6 +161,8 @@ static int on_p2(spg_t *m, void *user)
         c->p1[i] = m->ram[addrs[i]];
         m->ram[addrs[i]] = c->p2[i];
     }
+    c->keep[2] = m->ram[PAL_TABLE + BATMAN_PAL_ID];
+    m->ram[PAL_TABLE + BATMAN_PAL_ID] = P2_ATTR;
     c->keep[0] = m->ram[PAD_HELD];
     c->keep[1] = m->ram[PAD_PRESSED];
     const uint16_t held = c->buttons2 & 0xFFF0;
@@ -185,6 +211,10 @@ static int on_done(spg_t *m, void *user)
     }
     m->ram[PAD_HELD] = c->keep[0];
     m->ram[PAD_PRESSED] = c->keep[1];
+    m->ram[PAL_TABLE + BATMAN_PAL_ID] = c->keep[2];
+    if (m->ram[BANK_SEG] == P2_BANK_SEG) m->ram[BANK_SEG] = SPRITE_BANK_SEG;
+    for (int i = 0; i < 16; i++) /* colour 0 too: transparency is bit 15 of the colour */
+        m->vram[0x2B00 - 0x2900 + P2_PAL_BANK * 16 + i] = m->rom[P2_PAL_ROM + i];
     leash(m);
     m->cpu.r[REG_SR] = c->ret_sr;
     m->cpu.r[REG_PC] = c->ret_pc;
@@ -198,6 +228,7 @@ void coop_attach(spg_t *m)
     m->coop.enabled = 1;
     mods_hook(PLAYER_UPDATE, on_update, NULL);
     mods_hook(CAMERA_FOLLOW, on_camera, NULL);
+    mods_hook(FAR_READ, on_far_read, NULL);
     mods_hook(TRAMP_P2, on_p2, NULL);
     mods_hook(TRAMP_DONE, on_done, NULL);
 }
