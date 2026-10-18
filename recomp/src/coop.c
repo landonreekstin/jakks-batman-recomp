@@ -34,8 +34,8 @@
  * player's walk through it (object word 6 -> DOOR_WALK) on the door's direction, reading the
  * buttons from PAD_HELD/PAD_PRESSED; P2's collision pass puts P2's buttons there. The walk moves the
  * player into the next room. Whoever starts it, P1 walks through: if it is P2, P1 takes over P2's
- * object (keeping its own health and special) and P2 steps out. P2 rejoins beside P1 when the walk
- * is over (word 6 back to the normal update).
+ * object (keeping its own health and special) and P2 steps out. P2 rejoins on P1's spot, in front
+ * of the door, when the walk is over (word 6 back to the normal update).
  *
  * The camera: the player update calls the camera follow (0x00C695) with the player's position.
  * P1's call gets the midpoint of the two players instead; P2's returns at once. The leash keeps
@@ -287,8 +287,8 @@ static int on_obj_loop(spg_t *m, void *user)
     return 0;
 }
 
-/* P2 back beside P1 after a door: P1's state, as the walk left it in the new room, with P2's
- * health and special */
+/* P2 back after a door: P1's state, as the walk left it in the new room (in front of the door),
+ * with P2's health and special */
 static void rejoin_p2(spg_t *m)
 {
     coop_t *c = &m->coop;
@@ -298,8 +298,7 @@ static void rejoin_p2(spg_t *m)
     for (int i = 0; i < n; i++) c->p2[i] = m->ram[addrs[i]];
     c->p2[CTX_HEALTH] = keep[0];
     c->p2[CTX_SPECIAL] = keep[1];
-    c->p2[CTX_SPECIAL + 1] = keep[2];
-    move_x(m, 1, (int16_t)(*word(m, 0, POS_X) - SPAWN_BEHIND));
+    c->p2[CTX_SPECIAL + 1] = keep[2]; /* same spot as P1: in front of the door, as the game puts it */
     c->last_x[0] = (int16_t)*word(m, 0, POS_X);
     c->last_x[1] = (int16_t)*word(m, 1, POS_X);
     c->p2_door = 0;

@@ -146,8 +146,8 @@ never runs. All of the state is in `spg_t.coop` and in save states.
   and the checkpoint restart brings P2 along.
 - **Doors.** P2's collision pass has P2's buttons in 0x080A/0x080B, so P2 can open a door and walk in.
   Whoever starts the walk, P1 walks through: if P2's word 6 becomes 0x5D80, P1 takes over P2's object
-  words (keeping P1's own health and special). P2 is out of play during the walk and rejoins beside P1
-  afterwards, with P1's state from the new room and P2's own health and special.
+  words (keeping P1's own health and special). P2 is out of play during the walk and rejoins on P1's spot
+  (in front of the door; an offset could put P2 off the map), with P1's state from the new room and P2's own health and special.
 - **Camera and leash.** The camera follow (0x00C695) aims at the midpoint; P2's call returns at
   once. The leash keeps the players at most 272 px apart.
 - **Look.** While P2's words are in RAM, sprite-bank reads (0x0DC492 at 05:1C40) go to 25:1C40,
