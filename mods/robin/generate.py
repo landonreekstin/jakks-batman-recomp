@@ -275,11 +275,30 @@ def robinize(img, cls):
         cx = (x0 + x1 + 1) // 2 + HEAD_SHIFT
         if "torso" not in cls:   # not the thug lying down
             cx = min(max(cx, xc - 3), xc + 2)
-        hx, hy = cx - len(HEAD[0]) // 2, y1 - len(HEAD) + 1
+        # chin no lower than just under the top of the back next to it (the hunched run's back
+        # rises above the source head)
+        chin = y1
+        if "torso" not in cls:
+            back = [q[1] for q, v in img.items() if (v in suit or v in skin) and q not in staff
+                    and q not in head and abs(q[0] - cx) <= 8 and y0 - 4 <= q[1] <= y1
+                    and not (x0 - 2 <= q[0] <= x1 + 3 and y0 - 3 <= q[1] <= y1)]
+            if back:
+                chin = min(y1, min(back) + 3)
+        hx, hy = cx - len(HEAD[0]) // 2, chin - len(HEAD) + 1
         for r, row in enumerate(HEAD):
             for k, ch in enumerate(row):
                 if ch != ".":
                     out[(hx + k, hy + r)] = HEAD_COLOURS[ch]
+        # bits of staff left floating over the head (its tip, where the rest is behind the head)
+        drawn = {(hx + k, hy + r) for r, row in enumerate(HEAD) for k, ch in enumerate(row) if ch != "."}
+        others = set(out) - drawn
+        rest = {q for q in others if q[1] < hy + 3 and abs(q[0] - cx) <= 6}
+        while rest:
+            part = component(others, next(iter(rest)))
+            rest -= part
+            if len(part) < 12 and all(q[1] < hy + 3 for q in part):
+                for q in part:
+                    del out[q]
 
         # a narrow cape close to the back, from the shoulders to the upper thigh
         shoulder, bottom = y1 + 1, waist + (feet - waist) // 3

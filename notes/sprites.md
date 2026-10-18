@@ -127,7 +127,8 @@ draws all 183 frames correctly assembled.
   - each frame is repainted by rule (tunic/legs split, staff by shape, cape), gets one hand-drawn
     head (`HEAD`, 7x8, outlined and shaded like the game's art) in place of the source's, and is
     re-cut into pieces. The head goes on the source head's chin line, but held over the top of the
-    body (the biggest patch of tunic), so it stays upright where the fighter hunches forward;
+    body (the biggest patch of tunic), so it stays upright where the fighter hunches forward, with its chin no lower than 3 px under the
+    top of the back. Staff tips left floating above it are removed;
   - idles and the stance use the fighter's upright frames 23–24. The fighter has no crouch, so
     the crouch is the thug's frame 39, with his chain removed and a staff drawn in;
   - the new tiles take the place of Batman's 443 tiles that only frames 0–138 use (it uses about
