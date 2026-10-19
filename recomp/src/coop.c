@@ -129,7 +129,8 @@
 
 #define SEARCHABLE 0x5DA1  /* a searchable object's word 6: {0x07, 0xF37C} */
 #define SEARCH_ON 0x2F     /* its word, nonzero while it is being searched */
-#define SEARCH_MESSAGE 5   /* GAME_STATE while the search result is shown */
+#define SEARCH_MESSAGE 5   /* GAME_STATE while a message (a search result, a locked door) is shown */
+#define GAME_PAUSED 1
 #define DOOR_WALK 0x5D80   /* object word 6 while the player walks through a door: {0x06, 0x528A} */
 
 #define P2_RESPAWN 180     /* frames P2 is out after losing a life */
@@ -337,6 +338,13 @@ static void unmask_searchables(spg_t *m)
     c->n_masked = 0;
 }
 
+/* the game is paused or shows a message: 0x00F12F, which skips the game's collision pass */
+static int busy(const spg_t *m)
+{
+    const uint16_t s = m->ram[GAME_STATE];
+    return s == GAME_PAUSED || s == SEARCH_MESSAGE;
+}
+
 static int in_message(spg_t *m)
 {
     return m->coop.searcher && m->ram[GAME_STATE] == SEARCH_MESSAGE;
@@ -396,6 +404,38 @@ static void rejoin_p2(spg_t *m)
     c->last_x[0] = (int16_t)*word(m, 0, POS_X);
     c->last_x[1] = (int16_t)*word(m, 1, POS_X);
     c->p2_door = 0;
+}
+
+/* puts the player's node back in its place in the chain the collision pass walks (word 0 next,
+ * word 1 previous, sorted by word OBJ_LEFT, signed; the ends are sentinels), as 0x07E686 does.
+ * P2's update sorts it by P2's x, and the pass then missed what was next to P1 (a door). */
+static void resort(spg_t *m, uint16_t n)
+{
+    uint16_t *w = m->ram;
+    const int16_t k = (int16_t)w[n + OBJ_LEFT];
+    const uint16_t p = w[n + 1];
+    if (!p || p >= 0x2800 - OBJ_LEFT || w[n] >= 0x2800 - OBJ_LEFT) return;
+    uint16_t at = p; /* the node to put n after */
+    for (int guard = 0; guard < 64 && w[at + 1] && w[at + 1] < 0x2800 - OBJ_LEFT
+                        && (int16_t)w[at + OBJ_LEFT] > k; guard++)
+        at = w[at + 1];
+    if (at == p) { /* not to the left: maybe to the right */
+        uint16_t q = w[n];
+        for (int guard = 0; guard < 64 && q && w[q] && w[q] < 0x2800 - OBJ_LEFT
+                            && (int16_t)w[q + OBJ_LEFT] < k; guard++) {
+            at = q;
+            q = w[q];
+        }
+    }
+    if (at == p) return;
+    const uint16_t next = w[n];
+    w[p] = next;
+    if (next) w[next + 1] = p;
+    const uint16_t after = w[at];
+    w[at] = n;
+    w[n + 1] = at;
+    w[n] = after;
+    if (after) w[after + 1] = n;
 }
 
 /* P2 started walking through a door (P2's words are swapped out): P1 takes it over */
@@ -571,6 +611,7 @@ static int on_done(spg_t *m, void *user)
     m->ram[PAD_PRESSED] = c->keep[1];
     m->ram[PAL_TABLE + BATMAN_PAL_ID] = c->keep[2];
     p2_door(m);
+    resort(m, c->base);
     for (int i = 0; i < 16; i++) /* colour 0 too: transparency is bit 15 of the colour */
         m->vram[0x2B00 - 0x2900 + P2_PAL_BANK * 16 + i] = m->rom[P2_PAL_ROM + i];
     if (p2_in_play(c)) leash(m);
@@ -717,7 +758,10 @@ static int on_coll(spg_t *m, void *user)
     uint16_t *r = m->cpu.r;
     if (c->coll_n == -1) { /* P1's pass returned: set up P2's */
         unmask_searchables(m);
-        if (!c->coll_ran) goto done;
+        /* the game skips its pass while it is busy, and a handler in P1's pass may have just made
+         * it busy: a door opened its message, which P2's touching the same door would replace
+         * with its label, leaving the game waiting for a message that is gone */
+        if (!c->coll_ran || busy(m)) goto done;
         swap_in_p2(m);
         if (c->searcher == 1) mask_searchables(m);
         c->keep[0] = m->ram[PAD_HELD]; /* handlers read the buttons (doors) */
@@ -761,6 +805,7 @@ static int on_coll(spg_t *m, void *user)
             break;
         }
         c->coll_step = 0;
+        if (busy(m)) break; /* a handler in this pass made it busy: the same as above */
         /* the next object */
         uint16_t x = 0;
         while (c->coll_i < c->coll_n) {
@@ -782,6 +827,7 @@ static int on_coll(spg_t *m, void *user)
     m->ram[PAD_HELD] = c->keep[0];
     m->ram[PAD_PRESSED] = c->keep[1];
     p2_door(m);
+    resort(m, c->base);
 done:
     c->phase = 0;
     c->coll_n = 0;

@@ -153,6 +153,16 @@ never runs. All of the state is in `spg_t.coop` and in save states.
 - **Collisions.** After P1's collision pass, P2's words go into RAM and every object is tested
   against the player as 0x0DD0AD tests a pair. The chain links are not touched: a first version
   that patched them hung the game when a handler removed an object.
+  - **The chain is sorted by x (word 4), and the player's update keeps it sorted** (0x07E686: word 0
+    next, word 1 previous, sentinels at the ends). P2's update ran it with P2's x, so P1's node sat
+    where P2 was and the game's pass missed what was next to P1: P1 couldn't open the door it stood
+    at in Cell Block A, or touch the locked door. After P2's update the node goes back to P1's place.
+  - **P2's pass is skipped while the game is busy** (paused or showing a message, 0x00F12F: [0x2706]
+    1 or 5), as the game's own pass is, and stops when a handler makes it busy. A door's handler runs
+    for each player touching it. When P1 held X at the locked door, its handler opened the message
+    (0x0DA5BB mode 3, [0x2706] = 5); P2's run of the same handler then put the door's label in its
+    place (0x0DA5BB mode 0). The game stayed busy with no message to close, so both players were
+    stuck while the music played. While a message is up, [[0x2675]] is its text id (0xFFFF: none).
 - **Deaths.** 0x0DD43C with P2's words in RAM takes one of P2's lives: P2 is out for 3 s, then
   comes back beside P1 with full health, or stays out with none left. P1's deaths are the game's,
   and the checkpoint restart brings P2 along.
@@ -185,8 +195,13 @@ never runs. All of the state is in `spg_t.coop` and in save states.
 - **P2's HUD** shows Batman's lives heads.
 - **P2 dies at once:** no knockdown animation, and no blinking on respawn.
 - **Robin's melee range and Birdarang:** these are code patches, so P2 has Batman's.
-- **Doors** are checked only at the first door of *Search for a Smile*. Rooms entered in other ways
-  (Street Party's sections, scripted scene changes) haven't been checked with P2.
+- **Doors** are checked in the first rooms of *Search for a Smile* (Cell Block A, the locked door
+  and its message). Rooms entered in other ways (Street Party's sections, scripted scene changes)
+  haven't been checked with P2.
+- **Only P1's buttons close a message P2 didn't search for** (a locked door's): the message object
+  (0x00E4, update 0x0DA35B) reads the game's pad words, which hold P1's.
+- **"P1 couldn't attack sometimes"** (reported from online play) is not reproduced. In Street Party
+  B starts an attack as often in co-op as alone.
 - **Pool objects** run with P2's words in RAM when they target P2, including non-enemies (level
   objects such as 0x0DB492). Harmless so far, but a level object that moves the player would move P2.
 - **Fast Lane (driving):** P2 is not there yet.
