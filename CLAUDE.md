@@ -63,7 +63,9 @@ PPU/SPU work.
   rollback. The guest joins from the host's state at any time, and desyncs are found by a state hash
   every second and fixed by resending the host's state. `tests/net.sh` (loopback with simulated
   latency, jitter and loss): host and guest end identically, the settled inputs replay offline to
-  the same state, and a knocked-off guest is resynced. Not yet tried between two machines. Next: P1
+  the same state, and a knocked-off guest is resynced. Played once between gaming-pc and blaney-pc over the
+  VPN (about 90 ms ping): it found a freeze at a locked door and doors P1 couldn't use, both fixed
+  (`notes/coop.md`). Next: P1
   respawning in place while P2 lives, and the driving levels (plan in `notes/coop.md`).
 - Not done: static recompiler (code is still interpreted).
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.

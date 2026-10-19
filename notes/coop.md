@@ -205,4 +205,4 @@ never runs. All of the state is in `spg_t.coop` and in save states.
 - **Pool objects** run with P2's words in RAM when they target P2, including non-enemies (level
   objects such as 0x0DB492). Harmless so far, but a level object that moves the player would move P2.
 - **Fast Lane (driving):** P2 is not there yet.
-- **Netplay** works (`notes/netplay.md`), tested on loopback only.
+- **Netplay** works (`notes/netplay.md`), on loopback and once over the VPN.

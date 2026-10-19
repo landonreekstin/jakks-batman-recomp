@@ -78,8 +78,9 @@ Without rollback, every input would wait for the network round trip. Instead:
 
 ## Open
 
-- Tested only on loopback, with simulated latency, jitter and loss; not yet between two machines on
-  the VPN.
+- Played once between two machines on the VPN (gaming-pc hosting, blaney-pc joining, ping about
+  90 ms): 2605 rollbacks, 58 waits or stalls, no desyncs. Its two bugs were co-op's, not the
+  netplay's (`notes/coop.md`). One report, P1 sometimes not attacking, isn't reproduced.
 - The time sync only acts at a 1-frame difference, so the machine that is behind does most of the
   rollbacks.
 - The guest's EEPROM is the host's, and the guest never saves it.
