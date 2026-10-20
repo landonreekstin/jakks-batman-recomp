@@ -10,14 +10,20 @@
  * counter, r2 = its address). There a hook pushes the id and a return into a trampoline in the
  * upper ROM copy (which the game never runs), as a far call does, and jumps to 0x00ECB7. Its
  * retf lands on the trampoline, whose hook drops the argument, puts r1-r4 back and resumes the
- * wait. */
+ * wait.
+ *
+ * VS_SND_STOP calls 0x00EE50 the same way instead: it frees all 16 of the driver's voices (their
+ * ids at RAM 0x2465 + 14n go to -1), which is what the game does before it starts new music
+ * (0x0DB975, 0x00F585). Without it the title music goes on under the fight's. */
 #include "vssound.h"
 
 #include "mod.h"
 #include "spg.h"
+#include "versus.h"   /* VS_SND_STOP */
 
 #define WAIT_LOOP 0x005CE1
 #define PLAY_SOUND 0x00ECB7
+#define STOP_ALL 0x00EE50
 #define TRAMP 0x3FFF20
 #define TITLE_FRAMES 700     /* the title menu is up (and its music on) by vblank ~600 */
 #define QUEUE 32
@@ -46,7 +52,7 @@ static int on_wait(spg_t *m, void *user)
     push(m, TRAMP & 0xFFFF);
     push(m, (uint16_t)((r[REG_SR] & ~0x3f) | (TRAMP >> 16)));
     r[REG_SR] = (uint16_t)(r[REG_SR] & ~0x3f);   /* segment 0 */
-    r[REG_PC] = PLAY_SOUND & 0xFFFF;
+    r[REG_PC] = (id == VS_SND_STOP ? STOP_ALL : PLAY_SOUND) & 0xFFFF;   /* both in segment 0 */
     m->cpu.cycles += 9;
     busy = 1;
     return 1;

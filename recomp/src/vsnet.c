@@ -442,7 +442,9 @@ static void on_up(vsnet_t *n, const up_t *p, int len, const struct sockaddr_stor
         const int rtt = (int)(t - p->t_echo) - (int)p->t_hold;
         if (rtt >= 0) g->rtt = g->rtt ? (g->rtt * 7 + rtt) / 8 : rtt;
     }
-    take_input(n, p->slot, p->first, p->n, p->in);
+    uint16_t in[MAX_UP];   /* out of the packed struct */
+    memcpy(in, p->in, sizeof(in));
+    take_input(n, p->slot, p->first, p->n, in);
     if (p->hash_frame) {
         const int k = (int)(p->hash_frame / HASH_EVERY % HASHES);
         g->hash[k].frame = p->hash_frame;

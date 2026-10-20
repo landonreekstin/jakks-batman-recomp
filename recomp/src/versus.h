@@ -21,13 +21,18 @@ enum {
 
 enum { VS_COUNTDOWN, VS_FIGHT, VS_GAME_OVER, VS_SELECT };
 
-/* sounds: ids of the game's own play-sound function (vssound.h). Picked from what the game plays
- * around the same events in a recorded session (notes/versus.md); retune by ear here. */
+/* sounds: ids of the game's own play-sound function (vssound.h). The hits are what the game's
+ * hit routine 0x0070D9 plays (notes/versus.md): a punch 0x00/0x01, a kick 0x02/0x03 (one of the
+ * two at random), a hero attack 0x04, and 0x24/0x25 when an enemy goes down. The others are
+ * picked from a recorded session; retune by ear here (batman --sound-test plays any id).
+ * VS_SND_STOP is not an id: it stops everything playing, as the game does (0x00EE50) before it
+ * starts music. */
 enum {
-    VS_SND_JUMP = 0x05, VS_SND_SWING = 0x02, VS_SND_HIT = 0x0C, VS_SND_HIT_HEAVY = 0x23,
-    VS_SND_SHOT_HIT = 0x0F, VS_SND_BLOCK = 0x1C, VS_SND_THROW = 0x24, VS_SND_GRAPNEL = 0x25,
-    VS_SND_KO = 0x41, VS_SND_CURSOR = 0x3F, VS_SND_CHOOSE = 0x40, VS_SND_NO = 0x07,
+    VS_SND_JUMP = 0x05, VS_SND_HIT = 0x00, VS_SND_KICK = 0x02, VS_SND_HIT_HEAVY = 0x04,
+    VS_SND_BLOCK = 0x0F, VS_SND_THROW = 0x0D, VS_SND_GRAPNEL = 0x1F, VS_SND_KO = 0x24,
+    VS_SND_CURSOR = 0x3F, VS_SND_CHOOSE = 0x40, VS_SND_NO = 0x07,
     VS_MUSIC_SELECT = 0x61, VS_MUSIC_FIGHT = 0x62, VS_MUSIC_END = 0x5E,
+    VS_SND_STOP = 0x100,
 };
 #define VS_SND 8
 
@@ -70,7 +75,14 @@ typedef struct vs_fighter {
     int32_t ledge_used;      /* caught one since it last landed (no second safe catch) */
     int32_t grapple_x, grapple_y;   /* the grapnel's anchor, px, while ST_GRAPPLE */
     int32_t ice_used;        /* Mr. Freeze: made his ice since he last stood on the stage */
+    int32_t flash;           /* ticks of the white flash after a hit (as the game's) left */
 } vs_fighter_t;
+
+#define VS_SPARK 12
+typedef struct vs_spark {    /* a hit mark: the game's spark, in the hitter's colour */
+    int32_t t;               /* 0: none; ticks since the hit */
+    int32_t owner, x, y;     /* the hitter, the point hit (px) */
+} vs_spark_t;
 
 #define VS_ICE 4
 typedef struct vs_ice {      /* Mr. Freeze's ice platform */
@@ -102,6 +114,7 @@ typedef struct versus {
     vs_fighter_t f[VS_MAX];
     vs_proj_t proj[VS_PROJ];
     vs_ice_t ice[VS_ICE];
+    vs_spark_t spark[VS_SPARK];
     int32_t stage;
     int32_t cam_x, cam_y;    /* the camera's top left, 1/256 px of the stage's map */
     int32_t snd[VS_SND];     /* the sounds the last versus_step made (VS_SND_*) */

@@ -45,6 +45,10 @@
 #define COUNTDOWN 150
 #define GAME_OVER_WAIT 240
 #define DROP_TICKS 12
+#define FLASH_TICKS 16           /* a hit fighter flashes white, two ticks on and two off (the game's) */
+#define SPARK_TICKS 15           /* a hit mark: small, big, then its ring, 5 ticks each */
+#define SPARK_TILE_BLUE 0x41C    /* the three 16x16 tiles of each, in Batman's tiles and palette */
+#define SPARK_TILE_FIRE 0x46B
 
 enum { ST_FREE, ST_ATTACK, ST_HITSTUN, ST_RESPAWN, ST_OUT, ST_SHIELD, ST_DODGE, ST_DIZZY, ST_LEDGE, ST_GRAPPLE, ST_FROZEN };
 
@@ -104,9 +108,15 @@ typedef struct character {
     int16_t armor;           /* percent of a hit's damage it takes (0: all of it) */
     uint32_t bank, palettes; /* 0: the game's sprite bank and palettes; Robin's are in the upper ROM copy */
     const uint16_t *colors;  /* its own 16 colours instead of the ROM palette (the stand-ins) */
+    uint16_t spark[3];       /* its hit marks: light, middle, dark (0: Batman's blue) */
 } character_t;
 
 #define C5(r, g, b) ((uint16_t)((r) << 10 | (g) << 5 | (b)))
+/* hit mark colours from one colour: towards white, itself, darker */
+#define SPARK(r, g, b) { C5((r) + (31 - (r)) / 2, (g) + (31 - (g)) / 2, (b) + (31 - (b)) / 2), C5(r, g, b), \
+                         C5((r) * 5 / 8, (g) * 5 / 8, (b) * 5 / 8) }
+#define SPARK_BLUE { 0x2FBF, 0x16BE, 0x01BD }   /* the game's: Batman's hits */
+#define SPARK_FIRE { 0x7F40, 0x7E69, 0x7D88 }   /* the game's: the enemies' hits on Batman */
 /* v1 stand-ins for characters the game doesn't have: another character's frames in colours of
  * their own, until frames are drawn for them (notes/versus.md). Colour 0 is transparent. */
 static const uint16_t NIGHTWING_COLORS[16] = {   /* over the staff fighter (palette id 0x1C) */
@@ -185,7 +195,7 @@ static const proj_def_t PROJS[] = {
 
 #define A(f, l, t, lp) { f, l, t, lp }
 static const character_t CHARS[] = {
-    { .name = "BATMAN", .header = 0x2EFF, .pal = 0x03,
+    { .name = "BATMAN", .spark = SPARK_BLUE, .header = 0x2EFF, .pal = 0x03,
       .idle = A(3, 4, 30, 1), .walk = A(5, 12, 5, 1), .jump = A(18, 19, 8, 0), .djump = A(20, 22, 5, 0),
       .fall = A(23, 24, 8, 1), .hurt = A(105, 106, 6, 0), .tumble = A(109, 111, 6, 0),
       .mv = {
@@ -208,7 +218,7 @@ static const character_t CHARS[] = {
       },
       .walk_v = 576, .air_v = 512, .jump_v = 1536, .djump_v = 1280, .gravity = 64, .fall_v = 1408,
       .weight = 100, .air_jumps = 1, .body = { -8, -44, 8, 0 }, .tall = 48, .reach = 34 },
-    { .name = "JOKER", .header = 0xB682, .pal = 0x25,
+    { .name = "JOKER", .spark = SPARK(18, 6, 31), .header = 0xB682, .pal = 0x25,
       .idle = A(0, 0, 30, 1), .walk = A(49, 60, 4, 1), .jump = A(4, 4, 8, 0), .djump = A(6, 6, 8, 0),
       .fall = A(4, 4, 8, 1), .hurt = A(2, 3, 6, 0), .tumble = A(6, 6, 6, 0),
       .mv = {
@@ -230,7 +240,7 @@ static const character_t CHARS[] = {
       .weight = 95, .air_jumps = 1, .body = { -8, -42, 10, 0 }, .tall = 50, .reach = 34 },
     /* Bane: slow and heavy, hits very hard, takes 3/4 of the damage, a poor recovery. His frames
      * have no attacks (new ones are to be drawn): the stagger 31-34 stands in, with boxes given. */
-    { .name = "BANE", .header = 0xBFB5, .pal = 0x26, .strip_lo = 0x10E2, .strip_hi = 0x10EC,
+    { .name = "BANE", .spark = SPARK_FIRE, .header = 0xBFB5, .pal = 0x26, .strip_lo = 0x10E2, .strip_hi = 0x10EC,
       .idle = A(0, 20, 4, 1), .walk = A(0, 20, 4, 1), .jump = A(0, 0, 8, 0), .djump = A(0, 0, 8, 0),
       .fall = A(0, 0, 8, 1), .hurt = A(29, 30, 4, 0), .tumble = A(26, 26, 4, 0),
       .mv = {
@@ -249,7 +259,7 @@ static const character_t CHARS[] = {
       },
       .walk_v = 320, .air_v = 320, .jump_v = 1400, .djump_v = 900, .gravity = 76, .fall_v = 1750,
       .weight = 170, .armor = 75, .air_jumps = 1, .body = { -24, -70, 30, 0 }, .tall = 82, .reach = 56 },
-    { .name = "FIREFLY", .header = 0x57EA, .pal = 0x0D,
+    { .name = "FIREFLY", .spark = SPARK(31, 20, 2), .header = 0x57EA, .pal = 0x0D,
       .idle = A(14, 19, 6, 1), .walk = A(14, 19, 4, 1), .jump = A(40, 43, 6, 0), .djump = A(44, 47, 4, 0),
       .fall = A(44, 51, 5, 1), .hurt = A(56, 58, 5, 0), .tumble = A(60, 60, 6, 0),
       .mv = {
@@ -266,7 +276,7 @@ static const character_t CHARS[] = {
       },
       .walk_v = 576, .air_v = 576, .jump_v = 1400, .djump_v = 1100, .gravity = 52, .fall_v = 1100,
       .weight = 85, .air_jumps = 3, .body = { -8, -48, 8, 0 }, .tall = 54, .reach = 40 },
-    { .name = "PENGUIN", .header = 0x4D64, .pal = 0x0B,
+    { .name = "PENGUIN", .spark = SPARK(24, 24, 28), .header = 0x4D64, .pal = 0x0B,
       .idle = A(6, 7, 20, 1), .walk = A(68, 77, 4, 1), .jump = A(79, 79, 8, 0), .djump = A(79, 79, 8, 0),
       .fall = A(79, 79, 8, 1), .hurt = A(80, 81, 6, 0), .tumble = A(79, 79, 6, 0),
       .mv = {
@@ -280,7 +290,7 @@ static const character_t CHARS[] = {
       },
       .walk_v = 448, .air_v = 448, .jump_v = 1450, .djump_v = 1200, .gravity = 64, .fall_v = 1400,
       .weight = 110, .air_jumps = 1, .body = { -11, -32, 9, 0 }, .tall = 40, .reach = 30 },
-    { .name = "MR.FREEZE", .header = 0x489F, .pal = 0x0A,
+    { .name = "MR.FREEZE", .spark = SPARK(20, 31, 31), .header = 0x489F, .pal = 0x0A,
       .idle = A(0, 4, 10, 1), .walk = A(13, 18, 6, 1), .jump = A(0, 0, 8, 0), .djump = A(0, 0, 8, 0),
       .fall = A(0, 0, 8, 1), .hurt = A(12, 12, 8, 0), .tumble = A(16, 16, 8, 0),
       .mv = {
@@ -300,7 +310,7 @@ static const character_t CHARS[] = {
       .weight = 125, .air_jumps = 1, .body = { -12, -54, 12, 0 }, .tall = 66, .reach = 32 },
     /* ---- stand-ins (v1): other characters' frames in colours of their own ---- */
     /* Nightwing on the staff fighter's frames (its staff as his escrima): quick and acrobatic */
-    { .name = "NIGHTWING", .header = 0x8699, .pal = 0x1C, .colors = NIGHTWING_COLORS,
+    { .name = "NIGHTWING", .spark = SPARK(6, 12, 31), .header = 0x8699, .pal = 0x1C, .colors = NIGHTWING_COLORS,
       .idle = A(17, 24, 6, 1), .walk = A(9, 16, 4, 1), .jump = A(32, 34, 6, 0), .djump = A(34, 38, 4, 0),
       .fall = A(39, 40, 8, 1), .hurt = A(138, 139, 6, 0), .tumble = A(139, 139, 6, 0),
       .mv = {
@@ -321,7 +331,7 @@ static const character_t CHARS[] = {
       .walk_v = 640, .air_v = 576, .jump_v = 1600, .djump_v = 1350, .gravity = 64, .fall_v = 1400,
       .weight = 88, .air_jumps = 1, .body = { -8, -46, 8, 0 }, .tall = 52, .reach = 44 },
     /* Harley Quinn on the Joker's frames (the mallet is hers too): lighter and quicker */
-    { .name = "HARLEY", .header = 0xB682, .pal = 0x25, .colors = HARLEY_COLORS,
+    { .name = "HARLEY", .spark = SPARK(31, 8, 14), .header = 0xB682, .pal = 0x25, .colors = HARLEY_COLORS,
       .idle = A(0, 0, 30, 1), .walk = A(49, 60, 3, 1), .jump = A(4, 4, 8, 0), .djump = A(6, 6, 8, 0),
       .fall = A(4, 4, 8, 1), .hurt = A(2, 3, 6, 0), .tumble = A(6, 6, 6, 0),
       .mv = {
@@ -341,7 +351,7 @@ static const character_t CHARS[] = {
       .walk_v = 600, .air_v = 540, .jump_v = 1600, .djump_v = 1350, .gravity = 64, .fall_v = 1400,
       .weight = 85, .air_jumps = 1, .body = { -8, -42, 10, 0 }, .tall = 50, .reach = 34 },
     /* Catwoman on the kickboxer's frames (frame list 0x7426): kicks, flips, the lightest */
-    { .name = "CATWOMAN", .header = 0x7426, .pal = 0x13, .colors = CATWOMAN_COLORS,
+    { .name = "CATWOMAN", .spark = SPARK(26, 10, 31), .header = 0x7426, .pal = 0x13, .colors = CATWOMAN_COLORS,
       .idle = A(17, 24, 6, 1), .walk = A(25, 31, 4, 1), .jump = A(33, 34, 6, 0), .djump = A(35, 38, 4, 0),
       .fall = A(37, 38, 6, 1), .hurt = A(134, 135, 6, 0), .tumble = A(137, 137, 6, 0),
       .mv = {
@@ -361,7 +371,7 @@ static const character_t CHARS[] = {
       .walk_v = 640, .air_v = 600, .jump_v = 1650, .djump_v = 1400, .gravity = 62, .fall_v = 1350,
       .weight = 82, .air_jumps = 1, .body = { -8, -44, 8, 0 }, .tall = 50, .reach = 34 },
     /* Deathstroke on the staff fighter's frames: heavier and harder, with a gun */
-    { .name = "DEATHSTROKE", .header = 0x8699, .pal = 0x1C, .colors = DEATHSTROKE_COLORS,
+    { .name = "DEATHSTROKE", .spark = SPARK(31, 26, 4), .header = 0x8699, .pal = 0x1C, .colors = DEATHSTROKE_COLORS,
       .idle = A(17, 24, 6, 1), .walk = A(9, 16, 5, 1), .jump = A(32, 34, 6, 0), .djump = A(34, 38, 4, 0),
       .fall = A(39, 40, 8, 1), .hurt = A(138, 139, 6, 0), .tumble = A(139, 139, 6, 0),
       .mv = {
@@ -383,7 +393,7 @@ static const character_t CHARS[] = {
       .walk_v = 544, .air_v = 512, .jump_v = 1520, .djump_v = 1250, .gravity = 66, .fall_v = 1450,
       .weight = 105, .air_jumps = 1, .body = { -8, -46, 8, 0 }, .tall = 52, .reach = 44 },
     /* Killer Croc on Bane's frames: almost as heavy, a little quicker */
-    { .name = "KILLER CROC", .header = 0xBFB5, .pal = 0x26, .strip_lo = 0x10E2, .strip_hi = 0x10EC,
+    { .name = "KILLER CROC", .spark = SPARK(10, 28, 6), .header = 0xBFB5, .pal = 0x26, .strip_lo = 0x10E2, .strip_hi = 0x10EC,
       .colors = CROC_COLORS,
       .idle = A(0, 20, 4, 1), .walk = A(0, 20, 3, 1), .jump = A(0, 0, 8, 0), .djump = A(0, 0, 8, 0),
       .fall = A(0, 0, 8, 1), .hurt = A(29, 30, 4, 0), .tumble = A(26, 26, 4, 0),
@@ -404,7 +414,7 @@ static const character_t CHARS[] = {
     /* mods/robin-p2's Robin: Batman's frame slots, rebuilt from the staff fighter's, in the
      * upper ROM copy (notes/sprites.md). Only offered when that mod is loaded. Its frames 139 on
      * are still Batman's, so no glide: the flying kick dashes instead. */
-    { .name = "ROBIN", .header = 0x2EFF, .pal = 0x03, .bank = 0x251C40, .palettes = 0x251840,
+    { .name = "ROBIN", .spark = SPARK(31, 6, 4), .header = 0x2EFF, .pal = 0x03, .bank = 0x251C40, .palettes = 0x251840,
       .idle = A(3, 4, 30, 1), .walk = A(5, 12, 4, 1), .jump = A(18, 19, 8, 0), .djump = A(20, 22, 5, 0),
       .fall = A(23, 24, 8, 1), .hurt = A(105, 106, 6, 0), .tumble = A(109, 111, 6, 0),
       .mv = {
@@ -482,6 +492,13 @@ static void snd(versus_t *v, int id)
     if (v->snd_n < VS_SND) v->snd[v->snd_n++] = id;
 }
 
+/* new music: what plays stops first, as the game does it (else the two play over each other) */
+static void music(versus_t *v, int id)
+{
+    snd(v, VS_SND_STOP);
+    snd(v, id);
+}
+
 static uint32_t rnd(versus_t *v)
 {
     uint32_t x = v->rng;
@@ -535,6 +552,13 @@ static void box_at(const int16_t *b, int x, int y, int facing, int *out)
 static int overlap(const int *a, const int *b)
 {
     return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+}
+
+/* the middle of where two boxes overlap: where a hit mark goes */
+static void overlap_mid(const int *a, const int *b, int *x, int *y)
+{
+    *x = ((a[0] > b[0] ? a[0] : b[0]) + (a[2] < b[2] ? a[2] : b[2])) / 2;
+    *y = ((a[1] > b[1] ? a[1] : b[1]) + (a[3] < b[3] ? a[3] : b[3])) / 2;
 }
 
 /* ---- fighters ---- */
@@ -791,7 +815,7 @@ static void ko(versus_t *v, int i)
     f->t = 0;
     f->helpless = f->squat = 0;
     f->state = --f->stocks > 0 ? ST_RESPAWN : ST_OUT;
-    snd(v, VS_SND_KO);
+    snd(v, VS_SND_KO + (int)(v->frame & 1));   /* the game picks one of the two at random */
 }
 
 static void start_dodge(vs_fighter_t *f, const character_t *c, int kind, int dir)
@@ -1112,10 +1136,7 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
             if (mv >= 0) {
                 if (dir) f->facing = dir;
                 if (c->mv[mv].grapple && try_grapple(v, i)) snd(v, VS_SND_GRAPNEL);
-                else {
-                    start_move(f, c, mv);
-                    if (c->mv[mv].dmg) snd(v, VS_SND_SWING);
-                }
+                else start_move(f, c, mv);   /* no sound of its own: the game's attacks have none either */
             }
         }
     } else if (f->state == ST_ATTACK) {
@@ -1239,8 +1260,25 @@ static int can_be_hit(const vs_fighter_t *t)
     return alive(t) && t->state != ST_RESPAWN && !t->invuln && !t->intangible;
 }
 
-/* i's hit lands on j, coming from the side `facing` points away from; returns the hitlag */
-static int land_hit(versus_t *v, int i, int j, int dmg, int bkb, int kbg, int angle, int facing)
+/* a hit mark at (x, y) px in i's colour */
+static void spark(versus_t *v, int i, int x, int y)
+{
+    int k = 0, oldest = 0;
+    for (; k < VS_SPARK && v->spark[k].t; k++)
+        if (v->spark[k].t > v->spark[oldest].t) oldest = k;
+    if (k == VS_SPARK) k = oldest;
+    v->spark[k] = (vs_spark_t){ .t = 1, .owner = i, .x = x, .y = y };
+}
+
+static void sparks_step(versus_t *v)
+{
+    for (int k = 0; k < VS_SPARK; k++)
+        if (v->spark[k].t && ++v->spark[k].t > SPARK_TICKS) v->spark[k].t = 0;
+}
+
+/* i's hit lands on j at (x, y) px, coming from the side `facing` points away from; returns the
+ * hitlag */
+static int land_hit(versus_t *v, int i, int j, int dmg, int bkb, int kbg, int angle, int facing, int x, int y)
 {
     vs_fighter_t *t = &v->f[j];
     const character_t *ct = &CHARS[t->ch];
@@ -1253,7 +1291,10 @@ static int land_hit(versus_t *v, int i, int j, int dmg, int bkb, int kbg, int an
         if (t->shield <= 0) shield_break(t, ct);
         return t->hitlag;
     }
-    snd(v, dmg >= 9 ? VS_SND_HIT_HEAVY : VS_SND_HIT);
+    /* the game's hit sounds: punches and kicks have two each, it picks one at random */
+    snd(v, dmg >= 9 ? VS_SND_HIT_HEAVY : (dmg >= 6 ? VS_SND_KICK : VS_SND_HIT) + (int)(v->frame & 1));
+    spark(v, i, x, y);
+    t->flash = FLASH_TICKS;
     t->damage += ct->armor ? dmg * ct->armor / 100 : dmg;
     if (t->damage > 999) t->damage = 999;
     const int s = bkb + KB_GROWTH * kbg * t->damage / ct->weight;
@@ -1296,12 +1337,13 @@ static void combat(versus_t *v, const uint16_t *rom)
             if (j == i || !can_be_hit(t) || (a->hit_mask >> j & 1)) continue;
             int body[4][4];
             const int nb = body_boxes(rom, t, body);
-            int touch = 0;
+            int touch = 0, hx = 0, hy = 0;
             for (int p = 0; p < nh && !touch; p++)
-                for (int q = 0; q < nb && !touch; q++) touch = overlap(hit[p], body[q]);
+                for (int q = 0; q < nb && !touch; q++)
+                    if ((touch = overlap(hit[p], body[q]))) overlap_mid(hit[p], body[q], &hx, &hy);
             if (!touch) continue;
             a->hit_mask |= 1 << j;
-            a->hitlag = land_hit(v, i, j, m->dmg, m->bkb, m->kbg, m->angle, a->facing);
+            a->hitlag = land_hit(v, i, j, m->dmg, m->bkb, m->kbg, m->angle, a->facing, hx, hy);
         }
     }
 }
@@ -1318,11 +1360,12 @@ static void ice_step(versus_t *v, const uint16_t *rom)
             if (j == e->owner || !can_be_hit(&v->f[j]) || (e->hit_mask >> j & 1)) continue;
             int body[4][4];
             const int nb = body_boxes(rom, &v->f[j], body);
-            int touch = 0;
-            for (int q = 0; q < nb && !touch; q++) touch = overlap(box, body[q]);
+            int touch = 0, hx = 0, hy = 0;
+            for (int q = 0; q < nb && !touch; q++)
+                if ((touch = overlap(box, body[q]))) overlap_mid(box, body[q], &hx, &hy);
             if (!touch) continue;
             e->hit_mask |= 1 << j;
-            land_hit(v, e->owner, j, ICE_DMG, 300, 70, 75, v->f[j].x / SUB < e->x ? -1 : 1);
+            land_hit(v, e->owner, j, ICE_DMG, 300, 70, 75, v->f[j].x / SUB < e->x ? -1 : 1, hx, hy);
         }
     }
 }
@@ -1357,8 +1400,9 @@ static void projectiles(versus_t *v, const uint16_t *rom)
             if (j == p->owner || !can_be_hit(&v->f[j]) || (p->hit_mask >> j & 1)) continue;
             int body[4][4];
             const int nb = body_boxes(rom, &v->f[j], body);
-            int touch = 0;
-            for (int q = 0; q < nb && !touch; q++) touch = overlap(box, body[q]);
+            int touch = 0, hx = 0, hy = 0;
+            for (int q = 0; q < nb && !touch; q++)
+                if ((touch = overlap(box, body[q]))) overlap_mid(box, body[q], &hx, &hy);
             if (!touch) continue;
             p->hit_mask |= 1 << j;
             vs_fighter_t *t = &v->f[j];
@@ -1371,7 +1415,7 @@ static void projectiles(versus_t *v, const uint16_t *rom)
                 t->last_hit_by = p->owner;
             } else
                 land_hit(v, p->owner, j, d->freeze ? 2 : d->dmg, d->bkb, d->kbg, d->angle,
-                         p->vx < 0 || (!p->vx && p->facing < 0) ? -1 : 1);
+                         p->vx < 0 || (!p->vx && p->facing < 0) ? -1 : 1, hx, hy);
             if (!d->follow) { p->kind = 0; break; }
         }
     }
@@ -1393,7 +1437,7 @@ void versus_rematch(versus_t *v, const uint16_t *rom, int select)
     v->matches = matches;
     v->select = keep_select;
     for (int i = 0; i < v->n; i++) v->f[i].prev = 0xFFFF;   /* no press carries over */
-    if (select) snd(v, VS_MUSIC_SELECT);
+    if (select) music(v, VS_MUSIC_SELECT);
 }
 
 static void add_fighter(versus_t *v, const uint16_t *rom)
@@ -1475,7 +1519,7 @@ static void select_step(versus_t *v, const uint16_t *rom, const uint16_t *b)
 {
     int roster[16];
     const int nr = versus_roster(rom, roster);
-    int humans = 0, ready = 0;
+    int humans = 0, ready = 0, start = 0;
     for (int i = 0; i < v->n; i++) {
         vs_fighter_t *f = &v->f[i];
         const uint16_t pressed = b[i] & ~f->prev;
@@ -1493,18 +1537,23 @@ static void select_step(versus_t *v, const uint16_t *rom, const uint16_t *b)
             }
             if (pressed & (VS_ATTACK | VS_JUMP)) { f->ready = 1; snd(v, VS_SND_CHOOSE); }
             else if (pressed & VS_SPECIAL) v->quit = 1;   /* back out of the select screen */
-            if (i == 0 && (pressed & VS_UP) && v->n < VS_MAX) add_fighter(v, rom);   /* one more CPU */
-            if (i == 0 && (pressed & VS_BLOCK)) versus_set_stage(v, v->stage + 1);    /* the next stage */
-            if (i == 0 && (pressed & VS_DOWN) && v->n > 2 && v->f[v->n - 1].bot) {   /* one fewer */
-                v->n--;
-                v->f[v->n].ch = -1;
-                v->f[v->n].state = ST_OUT;
-                for (int k = 0; k < v->n; k++) spawn(v, k);
-            }
         } else if (pressed & VS_SPECIAL) f->ready = 0;
+        /* P1 sets up the match, picked or not */
+        if (i == 0 && (pressed & VS_UP) && v->n < VS_MAX) { add_fighter(v, rom); snd(v, VS_SND_CURSOR); }   /* one more CPU */
+        if (i == 0 && (pressed & VS_BLOCK)) { versus_set_stage(v, v->stage + 1); snd(v, VS_SND_CURSOR); }   /* the next stage */
+        if (i == 0 && (pressed & VS_DOWN) && v->n > 2 && v->f[v->n - 1].bot) {   /* one fewer */
+            v->n--;
+            v->f[v->n].ch = -1;
+            v->f[v->n].state = ST_OUT;
+            for (int k = 0; k < v->n; k++) spawn(v, k);
+            snd(v, VS_SND_CURSOR);
+        }
         ready += f->ready;
+        if (pressed & VS_MENU) start = 1;
     }
-    if (v->phase_t > 20 && ready == humans) {
+    if (start && ready < humans) snd(v, VS_SND_NO);   /* not everyone has picked */
+    /* the fight starts when every human has picked and one of them presses Start */
+    if (v->phase_t > 20 && ready == humans && (start || !humans)) {
         for (int i = 0; i < v->n; i++) {
             v->f[i].stocks = v->stocks;
             v->f[i].ready = 0;
@@ -1550,8 +1599,8 @@ void versus_step(versus_t *v, const uint16_t *rom, const uint16_t *buttons)
     if (frozen && v->phase_t >= COUNTDOWN) {
         v->phase = VS_FIGHT;
         v->phase_t = 0;
+        music(v, VS_MUSIC_FIGHT);
         snd(v, VS_SND_CHOOSE);
-        snd(v, VS_MUSIC_FIGHT);
     }
 
     for (int i = 0; i < v->n; i++) {
@@ -1561,6 +1610,7 @@ void versus_step(versus_t *v, const uint16_t *rom, const uint16_t *buttons)
         const uint16_t pressed = in & ~f->prev;
         f->prev = in;
         if (f->invuln > 0 && f->state != ST_RESPAWN) f->invuln--;
+        if (f->flash > 0) f->flash--;
         if (f->hitlag > 0) {
             f->hitlag--;
             continue;
@@ -1576,6 +1626,7 @@ void versus_step(versus_t *v, const uint16_t *rom, const uint16_t *buttons)
         projectiles(v, rom);
         ice_step(v, rom);
     }
+    sparks_step(v);
 
     update_camera(v, 0);
     if (v->phase == VS_FIGHT) {
@@ -1586,7 +1637,7 @@ void versus_step(versus_t *v, const uint16_t *rom, const uint16_t *buttons)
             v->phase = VS_GAME_OVER;
             v->phase_t = 0;
             v->matches++;
-            snd(v, VS_MUSIC_END);
+            music(v, VS_MUSIC_END);
             v->winner = left ? who : -1;
         }
     }
@@ -1695,7 +1746,9 @@ static int draw_fighter(spg_t *m, const vs_fighter_t *f, int slot, int n, uint32
                    c->strip_hi, n);
     for (int i = 0; i < 16; i++) {
         uint16_t col = c->colors ? c->colors[i] : rom[(c->palettes ? c->palettes : PALETTES) + 16 * c->pal + i];
-        if (i && f->state == ST_SHIELD)   /* the shield: blue-white, red when it is about to break */
+        if (i && f->flash && !((FLASH_TICKS - f->flash) >> 1 & 1))   /* just hit: all white, as the game does */
+            col = 0x7FFF;
+        else if (i && f->state == ST_SHIELD)   /* the shield: blue-white, red when it is about to break */
             col = f->shield < SHIELD_MAX / 3 ? tint(col, 31, 10, 8, 8) : tint(col, 20, 26, 31, 9);
         else if (i && f->state == ST_DIZZY && (frame >> 3 & 1)) col = tint(col, 31, 31, 8, 8);
         else if (i && f->helpless) col = tint(col, 4, 4, 8, 6);   /* darker until it lands */
@@ -1776,6 +1829,40 @@ void versus_present(const versus_t *v, spg_t *m)
         }
         n = draw_proj(m, p, bank_of[p->kind], n, cx, cy);
     }
+    /* hit marks: the game's spark tiles over Batman's palette (id 0). The blue spark is drawn in
+     * colours 7-9 and the fiery one in 11-13, so a free bank holds two hitters' colours: the
+     * blue tiles get the first, the fiery tiles the second */
+    int spark_slot[VS_MAX], slots = 0, spark_bank = -1;
+    for (int i = 0; i < VS_MAX; i++) spark_slot[i] = -1;
+    for (int k = 0; k < VS_SPARK; k++) {
+        const vs_spark_t *e = &v->spark[k];
+        if (!e->t || n >= 256) continue;
+        const int ch = v->f[e->owner].ch;
+        if (spark_slot[e->owner] < 0) {
+            for (int i = 0; i < VS_MAX; i++)   /* the same character shares a colour */
+                if (spark_slot[i] >= 0 && v->f[i].ch == ch) spark_slot[e->owner] = spark_slot[i];
+            if (spark_slot[e->owner] < 0) {
+                if (!(slots & 1)) {   /* a new bank */
+                    while (next_bank < 8 && !(st->free_banks >> next_bank & 1)) next_bank++;
+                    if (next_bank < 8) {
+                        spark_bank = next_bank++;
+                        for (int i = 0; i < 16; i++) m->vram[0x200 + spark_bank * 16 + i] = m->rom[PALETTES + i];
+                    }
+                }
+                if (spark_bank < 0) continue;   /* no bank left */
+                spark_slot[e->owner] = spark_bank * 2 + (slots & 1);
+                const uint16_t *c = CHARS[ch].spark[1] ? CHARS[ch].spark : (const uint16_t[3])SPARK_BLUE;
+                for (int i = 0; i < 3; i++) m->vram[0x200 + spark_bank * 16 + (slots & 1 ? 11 : 7) + i] = c[i];
+                slots++;
+            }
+        }
+        const int slot = spark_slot[e->owner], step = (e->t - 1) * 3 / SPARK_TICKS;
+        uint16_t *sp = &m->vram[0x300 + 4 * n++];
+        sp[0] = (uint16_t)((slot & 1 ? SPARK_TILE_FIRE : SPARK_TILE_BLUE) + step);
+        sp[1] = (uint16_t)(e->x - cx - 160);
+        sp[2] = (uint16_t)(128 - (e->y - cy));
+        sp[3] = (uint16_t)(0x3051 | (slot >> 1) << 8);
+    }
     spg_render(m);
     for (int i = 0; i < v->n; i++) {   /* grapnel lines */
         const vs_fighter_t *f = &v->f[i];
@@ -1816,7 +1903,12 @@ void versus_present(const versus_t *v, spg_t *m)
     if (v->phase == VS_SELECT) {
         const int rows = (v->n + 3) / 4;
         osd_text(m->framebuffer, PPU_W, PPU_H, 160 - 19 * 6, 4 + rows * 22, 2, "CHOOSE YOUR FIGHTER");
-        osd_text(m->framebuffer, PPU_W, PPU_H, 160 - 26 * 3, 26 + rows * 22, 1, "LEFT/RIGHT PICK   B READY");
+        int humans = 0, ready = 0;
+        for (int i = 0; i < v->n; i++)
+            if (!v->f[i].bot) { humans++; ready += v->f[i].ready; }
+        if (ready == humans) {   /* blinks */
+            if (v->frame >> 4 & 1) osd_text(m->framebuffer, PPU_W, PPU_H, 160 - 21 * 3, 26 + rows * 22, 1, "PRESS START TO FIGHT!");
+        } else osd_text(m->framebuffer, PPU_W, PPU_H, 160 - 26 * 3, 26 + rows * 22, 1, "LEFT/RIGHT PICK   B READY");
         snprintf(s, sizeof(s), "P1 UP/DOWN: %d FIGHTERS   BLOCK: %s", v->n, st->name);
         osd_text(m->framebuffer, PPU_W, PPU_H, 160 - (int)strlen(s) * 3, 38 + rows * 22, 1, s);
     } else if (v->phase == VS_COUNTDOWN) {

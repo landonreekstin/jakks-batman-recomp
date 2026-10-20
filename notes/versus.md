@@ -251,12 +251,46 @@ The game's own sound driver plays everything.
   title music.
 - **Events.** `versus_step` lists the frame's sounds (`v->snd`), and the front end plays those
   of frames it hasn't played, so rollbacks and rewinds don't repeat them.
-- **The effect ids** (`VS_SND_*` in `versus.h`) are guesses. They come from counting which ids
-  the game plays right after A presses (0x05: jump) and B presses (0x02/0x03 swings;
-  0x0C/0x0F/0x23/0x1C hits) in session1, plus the title menu's 0x3F/0x40/0x07. They need a
-  listen and retuning: KO (0x41), throw (0x24), grapnel (0x25) and the end jingle (0x5E) are
-  the least sure.
+- **Music changes stop everything first.** The play function only starts a sound; the game
+  calls `0x00EE50` first, which frees all 16 driver voices (their ids at RAM 0x2465 + 14n go
+  to -1), before it starts music (0x0DB975 before the title music, 0x00F585). Versus queues the
+  same (`VS_SND_STOP`, sent through the same hook) before each music id. Without it, all 452 of
+  the title music's sample addresses went on playing under the fight music; with it, 2 do (a
+  note's tail).
+- **The hit sounds are the game's own.** The hit routine `0x0070D9` plays, by the hit's type
+  (object +0x1B, low nibble):
+  - 3, a punch: 0x00 or 0x01 (`0x0DD817(1)`, the game's random number masked by 1);
+  - 4, a kick: 0x02 or 0x03; with the special flag both play 0x04;
+  - 5: 0x23;
+  - and once the target's health reaches 0, 0x24 or 0x25.
+
+  Versus plays the punch pair under 6 %, the kick pair at 6–8 % and 0x04 from 9 %, picking from
+  each pair by frame parity, and 0x24/0x25 for a KO. Attacks have no swing sound, as in the
+  game. (The first guesses, 0x0C/0x23, came from session1: 0x1C/0x1D and 0x0F are what plays
+  when Batman is hit.)
+- **The other ids are still guesses:** jump 0x05 (after A presses), block 0x0F, throw 0x0D
+  (played in the Batarang code at 0x06582C), grapnel 0x1F (0x065AC9, also the Batarang's) and
+  the end jingle 0x5E. `batman --sound-test` plays any id (Left/Right ±1, Up/Down ±16, B plays,
+  X stops everything) and names the ones versus uses.
 - **Not yet:** sound in `batman-rt` (`--wav` doesn't cover versus), and per-character voices.
+
+## Hit effects
+
+Both as the story draws them (seen in session1 at vblanks 5396 and 4246, `--vdump`):
+- **The flash.** A hit fighter is drawn all white (the story switches it to palette bank 15,
+  all 0x7FFF) two ticks on, two off, for 16 ticks (`FLASH_TICKS`).
+- **Hit marks.** The story's sparks are 16×16 tiles in Batman's tiles, in palette id 0: blue
+  0x41C → 0x41D → 0x41E (small, big, its ring) on Batman's hits, and fiery 0x46B → 0x46D on
+  the enemies' hits on him. Versus puts one at the middle of the overlap of the hit and hurt
+  boxes, 5 ticks a tile (`vs_spark_t`, up to 12).
+- **In the hitter's colour.** The blue spark uses colours 7–9 of palette 0 and the fiery one
+  11–13, so one free palette bank holds two hitters' colours: palette 0 with 7–9 set to one
+  hitter's and 11–13 to the next's. Each character has a `spark` colour ramp (`SPARK(r, g, b)`:
+  towards white, itself, darker). Batman keeps the game's blue and Bane the game's fiery one; the
+  Joker is purple, Firefly orange, the Penguin pale grey, Mr. Freeze ice white, Nightwing deep
+  blue, Harley red-pink, Catwoman violet, Deathstroke gold, Killer Croc green, Robin red. The
+  banks come after the projectiles' from the stage's free ones; with none left a mark isn't
+  drawn.
 
 ## Save states and rewind
 
@@ -308,6 +342,8 @@ A match's whole state is its `versus_t`.
 - `tests/inputs/versus-platform.txt`: P1 lands on the catwalk (y 112), then drops through to the
   floor (y 208).
 - `tests/inputs/versus-combo.txt`: Batman's three hits do 3 + 3 + 6 %.
+- `tests/inputs/versus-select.txt`: P1 picks Bane and adds a CPU; the match waits on the select
+  screen until Start, then counts down.
 - An idle P1 against a CPU loses its 3 stocks, and the CPU wins with 3 KOs.
 - A 4-CPU match finishes, over 20,000 frames.
 - Story mode doesn't reach this code without `--versus`.
@@ -345,8 +381,10 @@ A match's whole state is its `versus_t`.
 3. **Menus.**
    - Done: the character select (`VS_SELECT`, the SDL front end's default). The fighters stand in
      their places; each human picks with Left/Right and confirms with B or A (X takes it back).
-     P1's Up/Down add or remove CPU fighters (2–8), and the countdown starts when every human is
-     ready. A rematch goes back to it. `batman-rt --select` and `tests/inputs/versus-select.txt`
+     P1's Up/Down add or remove CPU fighters (2–8) and P1's block changes the stage, picked or
+     not. When every human is ready it shows "PRESS START TO FIGHT!", and the countdown starts
+     only when one of them presses Start (Menu); Start before that plays "no". A rematch goes back
+     to it. `batman-rt --select` and `tests/inputs/versus-select.txt`
      test it.
    - To do: choosing the CPUs' characters, a stage select, stocks, costumes, and a
      `batman versus` entry in the launcher (nixos-config, bump the pin).

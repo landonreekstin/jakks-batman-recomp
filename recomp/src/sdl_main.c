@@ -260,6 +260,16 @@ static void net_run(void *ctx, spg_t *m, int render, int audio)
     m->render = 1;
 }
 
+/* --sound-test: the play function takes ids 0x00-0x68; these are versus's (versus.h) */
+#define SOUND_IDS 0x69
+static const struct { int id, pair; const char *name; } SOUND_NAMES[] = {
+    { VS_SND_HIT, 1, "PUNCH HIT" }, { VS_SND_KICK, 1, "KICK HIT" }, { VS_SND_HIT_HEAVY, 0, "HEAVY HIT" },
+    { VS_SND_JUMP, 0, "JUMP" }, { VS_SND_BLOCK, 0, "BLOCK" }, { VS_SND_THROW, 0, "THROW" },
+    { VS_SND_GRAPNEL, 0, "GRAPNEL" }, { VS_SND_KO, 1, "KO" }, { VS_SND_CURSOR, 0, "CURSOR" },
+    { VS_SND_CHOOSE, 0, "CHOOSE" }, { VS_SND_NO, 0, "NO" }, { VS_MUSIC_SELECT, 0, "SELECT MUSIC" },
+    { VS_MUSIC_FIGHT, 0, "FIGHT MUSIC" }, { VS_MUSIC_END, 0, "GAME OVER MUSIC" },
+};
+
 /* versus: a frame of the game in the background (its sound driver), with the new frame's sounds */
 static void vs_audio(spg_t *m, const versus_t *v, uint32_t *played)
 {
@@ -293,7 +303,7 @@ int main(int argc, char **argv)
     net_opts_t net_o = { 2, 0, 0, 0 };
     long max_frames = -1;
     const char *record_path = NULL, *mod_list = NULL, *mods_dir = "mods";
-    int versus = 0, vs_players = 4, vs_stocks = 3, vs_kb2 = 0, vs_quick = 0, vs_menu = 1, vs_stage = 0;
+    int versus = 0, vs_players = 4, vs_stocks = 3, vs_kb2 = 0, vs_quick = 0, vs_menu = 1, vs_stage = 0, vs_sound_test = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--save") && i + 1 < argc) snprintf(save_path, sizeof(save_path), "%s", argv[++i]);
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
@@ -307,6 +317,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--stocks") && i + 1 < argc) vs_stocks = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--kb2")) vs_kb2 = 1;
         else if (!strcmp(argv[i], "--quick")) vs_quick = 1;
+        else if (!strcmp(argv[i], "--sound-test")) versus = vs_sound_test = 1;
         else if (!strcmp(argv[i], "--stage") && i + 1 < argc) vs_stage = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--no-versus-menu")) vs_menu = 0;
         else if (!strcmp(argv[i], "--host")) {
@@ -329,7 +340,7 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100] [--coop] [--host [port] | --join addr[:port]] [--net-delay N] [--versus [--players N] [--stocks N] [--stage N] [--kb2] [--quick]] [--no-versus-menu]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100] [--coop] [--host [port] | --join addr[:port]] [--net-delay N] [--versus [--players N] [--stocks N] [--stage N] [--kb2] [--quick]] [--no-versus-menu] [--sound-test]\n", argv[0]);
         return 2;
     }
     if (versus && (coop || record_path)) {
@@ -681,6 +692,34 @@ int main(int argc, char **argv)
                 osd_text(vsv.framebuffer, PPU_W, PPU_H, 8, 100, 1, line);
                 if (vnet_wait[0]) osd_text(vsv.framebuffer, PPU_W, PPU_H, 8, 114, 1, vnet_wait);
             }
+        } else if (versus && vs_sound_test) {
+            /* the game's sounds one by one, to pick versus.h's VS_SND_* by ear */
+            static int id = VS_SND_HIT;
+            static uint16_t prev;
+            const uint16_t b = vs_key_buttons(0) | vs_pad_buttons(vpads[0]), p = b & ~prev;
+            prev = b;
+            id += (p & VS_RIGHT ? 1 : 0) - (p & VS_LEFT ? 1 : 0) + (p & VS_UP ? 16 : 0) - (p & VS_DOWN ? 16 : 0);
+            id = (id % SOUND_IDS + SOUND_IDS) % SOUND_IDS;
+            if (p & (VS_ATTACK | VS_JUMP)) vssound_play((uint16_t)id);
+            if (p & VS_SPECIAL) vssound_play(VS_SND_STOP);
+            vs_audio(&m, &vs, &vs_snd_frame);
+            versus_present(&vs, &vsv);
+            for (int y = 40; y < 200; y++)
+                for (int x = 30; x < 290; x++) vsv.framebuffer[y * PPU_W + x] = 0x101018;
+            char line[64];
+            osd_text(vsv.framebuffer, PPU_W, PPU_H, 160 - 10 * 6, 50, 2, "SOUND TEST");
+            snprintf(line, sizeof(line), "0x%02X", id);
+            osd_text(vsv.framebuffer, PPU_W, PPU_H, 160 - 4 * 12, 80, 4, line);
+            const char *used = "";
+            for (size_t k = 0; k < sizeof(SOUND_NAMES) / sizeof(SOUND_NAMES[0]); k++)
+                if (SOUND_NAMES[k].id == id || (SOUND_NAMES[k].pair && SOUND_NAMES[k].id + 1 == id)) used = SOUND_NAMES[k].name;
+            if (*used) {
+                snprintf(line, sizeof(line), "VERSUS: %s", used);
+                osd_text(vsv.framebuffer, PPU_W, PPU_H, 160 - (int)strlen(line) * 3, 124, 1, line);
+            }
+            osd_text(vsv.framebuffer, PPU_W, PPU_H, 40, 150, 1, "LEFT/RIGHT: 1   UP/DOWN: 16");
+            osd_text(vsv.framebuffer, PPU_W, PPU_H, 40, 164, 1, "ATTACK: PLAY    SPECIAL: STOP ALL");
+            osd_text(vsv.framebuffer, PPU_W, PPU_H, 40, 178, 1, "ESC: QUIT");
         } else if (versus) {
             uint16_t b[VS_MAX] = {0};
             for (int k = 0; k < vs.n; k++) b[k] = vs_pad_buttons(vpads[k]);

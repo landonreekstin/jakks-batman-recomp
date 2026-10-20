@@ -121,7 +121,7 @@ midpoint, with a leash. Native only. Input scripts take an optional second mask 
 
 **Versus** (`--versus`, `notes/versus.md`): `batman target/batman.bin --versus [--players 2-8] [--stocks N]
 [--kb2] [--quick]`. It opens on the character select (Left/Right pick, B ready, X back, P1's Up/Down add or remove
-CPUs; `--quick` skips it). The story game's title menu also has it: a third item, **Versus**, under New Game and
+CPUs and block changes the stage; once everyone is ready, Start begins the fight; `--quick` skips it). The story game's title menu also has it: a third item, **Versus**, under New Game and
 Continue (`recomp/src/vsmenu.c`; Special on the select screen goes back to the title; off in recordings and online,
 and with `--no-versus-menu`). Paused, Special leaves a match for the select screen. P1 plays on the keyboard (arrows, Z = jump, X = attack, C = special, V = block, Enter = pause) and the
 first controller. `--kb2` adds P2 on W A S D, J, K, L, Left Shift, P. Every other controller takes the next CPU
@@ -134,7 +134,9 @@ from it, air dodges. Moves on Smash's scheme: B and B + direction (tilts, up/dow
 (specials: Batarang, the Joker's gun and gas bomb, the Penguin's bombs and chain, Firefly's flames, recoveries).
 Two stages (`--stage`, or P1's block on the select screen): the Catwalk and the Clock Tower (a scrolling camera,
 ledges to hang from, and Batman's grapnel to reach them). Sound and music come from the game's own driver, with
-the game kept running at its title menu in the background (`recomp/src/vssound.c`; the effect ids are guesses). `batman-rt --versus` runs matches headless (`--bots`, `--seed`, `--input` with a mask per player, `--snap`,
+the game kept running at its title menu in the background (`recomp/src/vssound.c`). The hit sounds are the game's own, and music changes stop what plays first, as the game
+does. The other effect ids are guesses: `batman target/batman.bin --sound-test` plays any id to retune them by ear
+(`VS_SND_*` in `versus.h`). Hits flash the fighter white and leave the story's spark, in the hitter's colour. `batman-rt --versus` runs matches headless (`--bots`, `--seed`, `--input` with a mask per player, `--snap`,
 `--hash`, `--state-save-at`/`--state-load`).
 
 **Online** (`notes/netplay.md`): the host runs `batman target/batman.bin --mods robin-p2 --host`

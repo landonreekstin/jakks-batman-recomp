@@ -1,7 +1,8 @@
 # versus (batman-rt --versus --select --players 4 --bots 2,3,4): on the select screen P1 goes
-# Right twice (Batman -> Joker -> Bane), Up adds a fifth fighter (a CPU), then B confirms and
-# the countdown starts. P1 is then Bane, with 5 fighters.
-# frame P1 (masks: 8000 up 4000 down 2000 left 1000 right 0200 attack)
+# Right twice (Batman -> Joker -> Bane), Up adds a fifth fighter (a CPU), then B confirms. The
+# match waits for Start (Menu, frame 100), then the countdown starts. P1 is then Bane, with 5
+# fighters.
+# frame P1 (masks: 8000 up 4000 down 2000 left 1000 right 0400 menu 0200 attack)
 30 1000
 31 0000
 40 1000
@@ -10,3 +11,5 @@
 51 0000
 60 0200
 61 0000
+100 0400
+101 0000

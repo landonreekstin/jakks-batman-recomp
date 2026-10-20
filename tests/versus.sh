@@ -12,7 +12,8 @@
 #     on the Clock Tower the grapnel pulls Batman up to a ledge, and he climbs on (versus-grapnel.txt);
 #   - Mr. Freeze: the freeze shot freezes with no damage, his ice holds him up, then melts
 #     (inputs/versus-freeze.txt);
-#   - character select: P1 picks Bane and adds a fifth fighter (inputs/versus-select.txt);
+#   - character select: P1 picks Bane and adds a fifth fighter, and the match waits for Start
+#     (inputs/versus-select.txt);
 #   - the title menu's Versus item: Down twice and A pick it (inputs/versus-menu.txt), and the
 #     game without the item is untouched (same state hash as a run without --versus-menu up to
 #     the title menu).
@@ -86,6 +87,9 @@ check "freeze: the ice melts" grep -q 'P1 MR.FREEZE .* at 145,208 on 1 ' <(vs "$
 out=$(vs --select --players 4 --bots 2,3,4 --input "$here/tests/inputs/versus-select.txt" --frames 120)
 check "select: P1 picked Bane" grep -q 'P1 BANE .* human stocks 3' <<<"$out"
 check "select: a fifth fighter was added" grep -q 'P5 PENGUIN .* cpu' <<<"$out"
+check "select: picked, it waits for Start" grep -q 'phase 3,' \
+    <(vs --select --players 4 --bots 2,3,4 --input "$here/tests/inputs/versus-select.txt" --frames 95)
+check "select: Start begins the countdown" grep -q 'phase 0,' <<<"$out"
 
 check "title menu: Versus is picked" grep -q 'versus requested at vblank 1301' \
     <("$rt" "$rom" --versus-menu --input "$here/tests/inputs/versus-menu.txt" --frames 1400 2>&1)
