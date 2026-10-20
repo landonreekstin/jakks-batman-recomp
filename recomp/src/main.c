@@ -28,7 +28,9 @@
  *                                [--bots 1,3 | all | none] the CPU slots (default: those the
  *                                --input script has no column for, or all without one),
  *                                [--stocks N] (3), [--seed N], [--stage N] (0 Catwalk, 1 Clock
- *                                Tower), [--select] open on the
+ *                                Tower), [--chars 5,1,..] the characters by slot (0 Batman,
+ *                                1 Joker, 2 Bane, 3 Firefly, 4 Penguin, 5 Mr. Freeze, 6 Robin),
+ *                                [--select] open on the
  *                                character select (versus.h). --input lines carry one mask per
  *                                player. --snap/--snap-frames, --hash, --state-save-at and
  *                                --state-load work on the match.
@@ -253,11 +255,17 @@ static int run_netplay(spg_t *m, const uint8_t rom_hash[32], int host_port, cons
 
 /* the fighting mode: no CPU, versus.c steps the match and draws it into m's video state */
 static int run_versus(spg_t *m, unsigned frames, int players, uint32_t bots, int stocks, uint32_t seed, int select, int stage,
+                      const char *chars,
                       int print_hash, const char *save, unsigned save_at, const char *load)
 {
     static versus_t v;
     versus_init(&v, m->rom, players, bots, stocks, seed, select);
     if (stage) versus_set_stage(&v, stage);
+    for (int i = 0; chars && *chars && i < v.n; i++) {   /* --chars: roster indices, in slot order */
+        versus_set_char(&v, i, atoi(chars));
+        chars = strchr(chars, ',');
+        if (chars) chars++;
+    }
     if (load && !versus_load(&v, load)) return 0;
     m->frame = v.frame;
     while (v.frame < frames) {
@@ -359,6 +367,7 @@ int main(int argc, char **argv)
     unsigned watch_from = 0, watch_to = ~0u;
     unsigned state_save_at = 0;
     int versus_menu = 0, net_players = 2, vs_stage = 0;
+    const char *vs_chars = NULL;
     int versus = 0, vs_players = 4, vs_stocks = 3, vs_bots_set = 0, vs_select = 0;
     uint32_t vs_bots = 0, vs_seed = 0;
 
@@ -382,6 +391,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--versus-menu")) versus_menu = 1;
         else if (!strcmp(argv[i], "--net-players") && i + 1 < argc) net_players = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--stage") && i + 1 < argc) vs_stage = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--chars") && i + 1 < argc) vs_chars = argv[++i];
         else if (!strcmp(argv[i], "--players") && i + 1 < argc) vs_players = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--stocks") && i + 1 < argc) vs_stocks = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--seed") && i + 1 < argc) vs_seed = (uint32_t)strtoul(argv[++i], NULL, 0);
@@ -454,7 +464,7 @@ int main(int argc, char **argv)
             return run_versus_net(&v, rom, id, host_port, join, &net_o, frames, fps > 0 ? fps : 60, net_players,
                                   net_log) ? 0 : 1;
         }
-        return run_versus(&m, frames, vs_players, vs_bots, vs_stocks, vs_seed, vs_select, vs_stage, print_hash,
+        return run_versus(&m, frames, vs_players, vs_bots, vs_stocks, vs_seed, vs_select, vs_stage, vs_chars, print_hash,
                           state_save, state_save_at, state_load) ? 0 : 1;
     }
     if (host_port || join) coop = 1;

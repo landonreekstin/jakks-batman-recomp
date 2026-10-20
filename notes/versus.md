@@ -176,18 +176,29 @@
 |---|---|---|---|---|---|---|
 | Batman | cape strike 60–66 / cape uppercut 84–89 / low sweep 92–96 | uppercut, spike 99–102 | Batarang (bank 0x0BD5) | glide kick 139–143 | rising uppercut | |
 | Joker | mallet / mallet overhead / mallet low | overhead, mallet spike | gun (frame 74) | gas bomb (frame 73, an arc) | jump kick | |
-| Bane | | | | charge | big jump | ground pound |
+| Bane | | | | shoulder charge | uppercut that flies him up | ground pound |
 | Firefly | | | flame burst (27–32) | jet kick | jet up | flame column (34–38, downwards) |
 | Penguin | | | bomb (89–96, an arc) | umbrella chain (to 128 px) | umbrella spin up | |
-| Mr. Freeze | | | freeze breath | | jump | |
+| Mr. Freeze | | | freeze breath | freeze shot (frozen 1 s, no damage) | ice: a hop, then a platform under him | |
 | Robin | as Batman | as Batman | Batarang | dash kick | rising uppercut | |
 
+- **Bane** is slow (walk 1.25 px a tick, attacks at 7–8 ticks a frame), hits for 12–16 %, is
+  the heaviest (170), and takes 3/4 of a hit's damage (`armor`). His second jump is weak. His
+  frames are still stand-ins (the stagger): new ones are to be drawn.
+- **Mr. Freeze's ice:**
+  - at the top of his X + up hop, a 64 px platform of his breath's cloud tiles appears under him;
+  - only he can stand on it (and jump again from it); anyone else it touches takes 6 %;
+  - it melts after a second, blinking at the end;
+  - one per trip off the stage.
+- **The freeze shot** (his breath's sparkle tiles) leaves its target frozen in place for 60
+  ticks, drawn icy, with no damage. A hit breaks it, and a shield blocks it.
 - **CPUs:**
   - they recover with X + up when off the stage with no jumps left;
   - they shoot neutral specials at fighters more than 70 px away;
   - they mix tilts and airs by where the target is.
 - **Checks:** `tests/inputs/versus-specials.txt` (the Batarang 4 %, the glide kick 12 % in all,
-  the recovery onto the catwalk).
+  the recovery onto the catwalk) and `versus-freeze.txt` (frozen at 0 %, standing on the ice, the
+  ice melting). `batman-rt --chars 5,1` picks characters by slot.
 
 ## Block
 
@@ -269,7 +280,19 @@ A match's whole state is its `versus_t`.
 
 1. ~~Proof of concept: one stage, 4 fighters, jab and aerial, pass-through platform, percent,
    basic knockback, stocks, CPUs.~~
-2. **Characters:** ~~the Penguin, Mr. Freeze, Robin~~ (done). Still to do: find Bane's real
+2. **Characters:** ~~the Penguin, Mr. Freeze, Robin~~ (done).
+   - **Bane** (new frames where the ROM has none):
+     - a shoulder charge on X + side;
+     - on X + up, a powerful uppercut that carries him up through the air;
+     - balance: slower movement and slower attacks, but much more damage dealt and taken, and a
+       weaker recovery when falling.
+   - **Mr. Freeze:**
+     - X + side shoots something that freezes the target for a second and does no damage;
+     - X + up, if feasible, "draws ice": a short-lived ice platform that hurts the others but
+       not him, and that he can jump off to recover.
+   - **New characters:** Nightwing, Harley Quinn, Catwoman, Deathstroke, Killer Croc. None is in
+     the ROM, so each needs frames made in the game's style (like `mods/robin`'s generator).
+   - **Sound and music:** borrowed from the rest of the game. Still to do: find Bane's real
    fighting frames, and the enemies' own animation tables.
    - **Costumes** instead of palette swaps: slightly redrawn sprites of a character's other forms
      from other media, such as a Batman Beyond suit for Batman.

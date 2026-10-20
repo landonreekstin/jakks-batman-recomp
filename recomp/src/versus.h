@@ -59,7 +59,15 @@ typedef struct vs_fighter {
     int32_t ledge_cd;        /* ticks before it can catch a ledge again */
     int32_t ledge_used;      /* caught one since it last landed (no second safe catch) */
     int32_t grapple_x, grapple_y;   /* the grapnel's anchor, px, while ST_GRAPPLE */
+    int32_t ice_used;        /* Mr. Freeze: made his ice since he last stood on the stage */
 } vs_fighter_t;
+
+#define VS_ICE 4
+typedef struct vs_ice {      /* Mr. Freeze's ice platform */
+    int32_t t;               /* 0: none; ticks since it was made */
+    int32_t owner, x, top;   /* its middle and its top, px */
+    int32_t hit_mask;
+} vs_ice_t;
 
 #define VS_PROJ 16
 typedef struct vs_proj {
@@ -83,6 +91,7 @@ typedef struct versus {
     int32_t quit;            /* a human backed out of the select screen (the front end decides) */
     vs_fighter_t f[VS_MAX];
     vs_proj_t proj[VS_PROJ];
+    vs_ice_t ice[VS_ICE];
     int32_t stage;
     int32_t cam_x, cam_y;    /* the camera's top left, 1/256 px of the stage's map */
 } versus_t;

@@ -46,7 +46,7 @@
 #define GAME_OVER_WAIT 240
 #define DROP_TICKS 12
 
-enum { ST_FREE, ST_ATTACK, ST_HITSTUN, ST_RESPAWN, ST_OUT, ST_SHIELD, ST_DODGE, ST_DIZZY, ST_LEDGE, ST_GRAPPLE };
+enum { ST_FREE, ST_ATTACK, ST_HITSTUN, ST_RESPAWN, ST_OUT, ST_SHIELD, ST_DODGE, ST_DIZZY, ST_LEDGE, ST_GRAPPLE, ST_FROZEN };
 
 /* block (Smash's shield, much simplified), in 1/256 points and ticks */
 #define SHIELD_MAX (50 * SUB)
@@ -89,6 +89,7 @@ typedef struct move {
     int8_t lowgrav;          /* a quarter of the gravity while it lasts (a glide) */
     int8_t helpless;         /* after it, in the air: no jumps or attacks until landing (a recovery) */
     int8_t grapple;          /* the grapnel: to a ledge in reach, if there is one (else the move as given) */
+    int8_t ice;              /* Mr. Freeze's ice: a platform under him at the top of the move */
 } move_t;
 
 typedef struct character {
@@ -100,6 +101,7 @@ typedef struct character {
     int16_t walk_v, air_v, jump_v, djump_v, gravity, fall_v, weight, air_jumps;
     int16_t body[4];         /* body box for frames without one */
     int16_t tall, reach;     /* for the HUD tag and the bots */
+    int16_t armor;           /* percent of a hit's damage it takes (0: all of it) */
     uint32_t bank, palettes; /* 0: the game's sprite bank and palettes; Robin's are in the upper ROM copy */
 } character_t;
 
@@ -113,9 +115,11 @@ typedef struct proj_def {
     int16_t dx, dy;          /* where it starts, from the thrower's feet, facing right */
     int8_t one;              /* one at a time per thrower */
     int8_t follow;           /* stays with the thrower (Firefly's flame column) */
+    int16_t freeze;          /* freezes the target this many ticks instead of hitting it */
+    uint16_t tile, tiles;    /* drawn as one 16x16 tile cycling through `tiles` from `tile` (else frames) */
 } proj_def_t;
 
-enum { PJ_BATARANG = 1, PJ_BULLET, PJ_GAS, PJ_BOMB, PJ_FLAME, PJ_COLUMN };
+enum { PJ_BATARANG = 1, PJ_BULLET, PJ_GAS, PJ_BOMB, PJ_FLAME, PJ_COLUMN, PJ_FREEZE };
 static const proj_def_t PROJS[] = {
     /* Batman's Batarang: the spin frames of bank entry 0x0BD5 (palette id 1) */
     { .header = 0x0BD5, .f0 = 0, .f1 = 13, .ticks = 2, .pal = 1, .box = { -7, -6, 7, 6 },
@@ -137,7 +141,16 @@ static const proj_def_t PROJS[] = {
     /* Firefly's flame column, frames 34-38, down from under him */
     { .header = 0x57EA, .f0 = 34, .f1 = 38, .ticks = 5, .pal = 0x0D, .box = { -9, -15, 6, 110 },
       .life = 25, .dmg = 8, .bkb = 350, .kbg = 90, .angle = -70, .dx = 0, .dy = 0, .one = 1, .follow = 1 },
+    /* Mr. Freeze's freeze shot: the sparkle tiles of his breath (2276-2278); freezes for 1 s */
+    { .header = 0x489F, .pal = 0x0A, .tile = 2276, .tiles = 3, .ticks = 3, .box = { -7, -7, 7, 7 },
+      .vx = 1280, .life = 50, .freeze = 60, .dx = 22, .dy = -42, .one = 1 },
 };
+/* Mr. Freeze's ice: a row of his breath's cloud tiles */
+#define ICE_TILE 2244
+#define ICE_HALF 32              /* half its width */
+#define ICE_TICKS 60
+#define ICE_DMG 6
+#define ICE_GROUND 100           /* grounded = ICE_GROUND + k: standing on ice k */
 #define NPROJ ((int)(sizeof(PROJS) / sizeof(PROJS[0])))
 
 #define A(f, l, t, lp) { f, l, t, lp }
@@ -185,23 +198,27 @@ static const character_t CHARS[] = {
       },
       .walk_v = 512, .air_v = 480, .jump_v = 1500, .djump_v = 1250, .gravity = 64, .fall_v = 1400,
       .weight = 95, .air_jumps = 1, .body = { -8, -42, 10, 0 }, .tall = 50, .reach = 34 },
+    /* Bane: slow and heavy, hits very hard, takes 3/4 of the damage, a poor recovery. His frames
+     * have no attacks (new ones are to be drawn): the stagger 31-34 stands in, with boxes given. */
     { .name = "BANE", .header = 0xBFB5, .pal = 0x26, .strip_lo = 0x10E2, .strip_hi = 0x10EC,
-      .idle = A(0, 20, 4, 1), .walk = A(0, 20, 3, 1), .jump = A(0, 0, 8, 0), .djump = A(0, 0, 8, 0),
+      .idle = A(0, 20, 4, 1), .walk = A(0, 20, 4, 1), .jump = A(0, 0, 8, 0), .djump = A(0, 0, 8, 0),
       .fall = A(0, 0, 8, 1), .hurt = A(29, 30, 4, 0), .tumble = A(26, 26, 4, 0),
       .mv = {
-          /* his frames have no attacks: the stagger 31-34 is his lunge, with boxes given here */
-          [MV_JAB1] = { .a = A(31, 34, 5, 0), .box = { 16, -64, 60, -16 }, .act0 = 32, .act1 = 33,
-                        .dmg = 10, .bkb = 600, .kbg = 120, .angle = 40, .lunge = 512 },
-          [MV_AIR] = { .a = A(31, 34, 5, 0), .box = { 16, -64, 60, -16 }, .act0 = 32, .act1 = 33,
-                       .dmg = 9, .bkb = 500, .kbg = 110, .angle = 50 },
-          [MV_SSPEC] = { .a = A(31, 34, 6, 0), .box = { 10, -70, 64, -4 }, .act0 = 31, .act1 = 34,
-                         .dmg = 12, .bkb = 650, .kbg = 120, .angle = 35, .vx0 = 1024 },        /* the charge */
-          [MV_USPEC] = { .a = A(0, 0, 30, 0), .vy0 = -2000, .helpless = 1 },                  /* a big jump */
-          [MV_DSPEC] = { .a = A(31, 34, 6, 0), .box = { -34, -24, 40, 4 }, .act0 = 31, .act1 = 34,
-                         .dmg = 12, .bkb = 550, .kbg = 110, .angle = 60, .vy0 = 1800 },        /* the ground pound */
+          [MV_JAB1] = { .a = A(31, 34, 7, 0), .box = { 16, -64, 60, -16 }, .act0 = 33, .act1 = 34,
+                        .dmg = 14, .bkb = 650, .kbg = 125, .angle = 40, .lunge = 384 },
+          [MV_AIR] = { .a = A(31, 34, 7, 0), .box = { 16, -64, 60, -16 }, .act0 = 33, .act1 = 34,
+                       .dmg = 12, .bkb = 550, .kbg = 115, .angle = 50 },
+          /* the shoulder charge */
+          [MV_SSPEC] = { .a = A(31, 34, 8, 0), .box = { 10, -70, 64, -4 }, .act0 = 32, .act1 = 34,
+                         .dmg = 16, .bkb = 700, .kbg = 125, .angle = 35, .vx0 = 1152 },
+          /* the uppercut that carries him up through the air */
+          [MV_USPEC] = { .a = A(31, 34, 6, 0), .box = { -20, -100, 34, -40 }, .act0 = 31, .act1 = 34,
+                         .dmg = 15, .bkb = 600, .kbg = 130, .angle = 85, .vy0 = -2100, .helpless = 1 },
+          [MV_DSPEC] = { .a = A(31, 34, 7, 0), .box = { -34, -24, 40, 4 }, .act0 = 31, .act1 = 34,
+                         .dmg = 14, .bkb = 550, .kbg = 115, .angle = 60, .vy0 = 1800 },        /* the ground pound */
       },
-      .walk_v = 384, .air_v = 384, .jump_v = 1500, .djump_v = 1200, .gravity = 72, .fall_v = 1600,
-      .weight = 140, .air_jumps = 1, .body = { -24, -70, 30, 0 }, .tall = 82, .reach = 56 },
+      .walk_v = 320, .air_v = 320, .jump_v = 1400, .djump_v = 900, .gravity = 76, .fall_v = 1750,
+      .weight = 170, .armor = 75, .air_jumps = 1, .body = { -24, -70, 30, 0 }, .tall = 82, .reach = 56 },
     { .name = "FIREFLY", .header = 0x57EA, .pal = 0x0D,
       .idle = A(14, 19, 6, 1), .walk = A(14, 19, 4, 1), .jump = A(40, 43, 6, 0), .djump = A(44, 47, 4, 0),
       .fall = A(44, 51, 5, 1), .hurt = A(56, 58, 5, 0), .tumble = A(60, 60, 6, 0),
@@ -244,7 +261,10 @@ static const character_t CHARS[] = {
                        .dmg = 8, .bkb = 450, .kbg = 105, .angle = 80 },
           [MV_NSPEC] = { .a = A(19, 29, 4, 0), .box = { -36, -72, 22, -44 }, .act0 = 22, .act1 = 27,
                          .dmg = 10, .bkb = 480, .kbg = 110, .angle = 80 },
-          [MV_USPEC] = { .a = A(0, 0, 30, 0), .vy0 = -1900, .helpless = 1 },
+          /* the freeze shot: frozen for a second, no damage */
+          [MV_SSPEC] = { .a = A(5, 11, 4, 0), .proj = PJ_FREEZE, .proj_frame = 8 },
+          /* draws ice: a hop, and at its top a platform only he can stand on, that hurts the others */
+          [MV_USPEC] = { .a = A(0, 0, 30, 0), .vy0 = -1500, .ice = 1 },
       },
       .walk_v = 416, .air_v = 416, .jump_v = 1450, .djump_v = 1150, .gravity = 70, .fall_v = 1500,
       .weight = 125, .air_jumps = 1, .body = { -12, -54, 12, 0 }, .tall = 66, .reach = 32 },
@@ -423,7 +443,7 @@ static void spawn(versus_t *v, int i)
     f->grounded = 1;
     f->jumps = c->air_jumps;
     f->shield = SHIELD_MAX;
-    f->shield_stun = f->dodge = f->intangible = f->air_dodged = f->helpless = f->squat = 0;
+    f->shield_stun = f->dodge = f->intangible = f->air_dodged = f->helpless = f->squat = f->ice_used = 0;
     f->anim_first = -1;
     set_anim(f, &c->idle);
 }
@@ -606,14 +626,17 @@ static uint16_t bot_input(versus_t *v, int i)
         else if (r == 1) b |= dx > 0 ? VS_RIGHT : VS_LEFT;
         b |= VS_ATTACK;
     } else if (adx > 70 && dy > -30 && dy < 30 && f->grounded && (dx > 0) == (f->facing > 0) &&
-               has_move(c, MV_NSPEC) && c->mv[MV_NSPEC].proj && !(f->prev & VS_SPECIAL) && rnd(v) % 30 == 0)
-        b = VS_SPECIAL;   /* shoot from afar (no direction: the neutral special) */
+               !(f->prev & VS_SPECIAL) && rnd(v) % 30 == 0) {   /* shoot from afar */
+        if (has_move(c, MV_NSPEC) && c->mv[MV_NSPEC].proj) b = VS_SPECIAL;
+        else if (has_move(c, MV_SSPEC) && c->mv[MV_SSPEC].proj) b = VS_SPECIAL | (dx > 0 ? VS_RIGHT : VS_LEFT);
+    }
     if (!(f->prev & VS_JUMP)) {
         if (dy < -40 && f->grounded && rnd(v) % 16 == 0) b |= VS_JUMP;
         else if (dy < -30 && !f->grounded && f->vy > 0 && f->jumps > 0 && rnd(v) % 6 == 0) b |= VS_JUMP;
         else if (rnd(v) % 200 == 0) b |= VS_JUMP;
     }
-    if (dy > 40 && f->grounded > 1 && !(f->prev & VS_DOWN) && rnd(v) % 24 == 0) b |= VS_DOWN;
+    if (dy > 40 && f->grounded > 1 && f->grounded < ICE_GROUND && !(f->prev & VS_DOWN) && rnd(v) % 24 == 0)
+        b |= VS_DOWN;
     return b;
 }
 
@@ -654,6 +677,37 @@ static void shield_break(vs_fighter_t *f, const character_t *c)
     f->grounded = 0;
     f->anim_first = -1;
     set_anim(f, &c->hurt);
+}
+
+/* the platform `g` stands for (grounded's numbering: 1.. the stage's, ICE_GROUND + k fighter i's
+ * ice k), NULL if it isn't there (melted, or someone else's) */
+static const platform_t *plat_of(const versus_t *v, int i, int g, platform_t *ice)
+{
+    if (g >= ICE_GROUND) {
+        const vs_ice_t *e = &v->ice[g - ICE_GROUND];
+        if (!e->t || e->owner != i) return NULL;
+        ice->x0 = (int16_t)(e->x - ICE_HALF);
+        ice->x1 = (int16_t)(e->x + ICE_HALF);
+        ice->top = (int16_t)e->top;
+        ice->solid = ice->ledges = 0;
+        return ice;
+    }
+    return g >= 1 && g <= STAGE(v)->nplat ? &STAGE(v)->plat[g - 1] : NULL;
+}
+
+static void make_ice(versus_t *v, int owner)
+{
+    const vs_fighter_t *f = &v->f[owner];
+    for (int k = 0; k < VS_ICE; k++)
+        if (!v->ice[k].t) {
+            vs_ice_t *e = &v->ice[k];
+            e->t = 1;
+            e->owner = owner;
+            e->x = f->x / SUB;
+            e->top = f->y / SUB + 2;
+            e->hit_mask = 0;
+            return;
+        }
 }
 
 /* a ledge's hang point: x of the end, and the platform's top */
@@ -861,6 +915,10 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
         if (f->dodge == 3) f->vx -= f->vx / 16;
         const int len = f->dodge == 2 ? ROLL_TICKS : f->dodge == 1 ? SPOT_TICKS : AIR_DODGE_TICKS;
         if (f->t >= len) { f->dodge = 0; to_free(f, c); }
+    } else if (f->state == ST_FROZEN) {   /* stuck in the ice: nothing until it thaws (or a hit) */
+        if (f->vx > 0) f->vx = f->vx > 40 ? f->vx - 40 : 0;
+        else f->vx = f->vx < -40 ? f->vx + 40 : 0;
+        if (--f->hitstun <= 0) to_free(f, c);
     } else if (f->state == ST_DIZZY) {
         if (f->vx > 0) f->vx = f->vx > 40 ? f->vx - 40 : 0;
         else f->vx = f->vx < -40 ? f->vx + 40 : 0;
@@ -900,7 +958,7 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
             }
         }
         if (pressed & VS_DOWN) {
-            if (f->grounded && !STAGE(v)->plat[f->grounded - 1].solid) {
+            if (f->grounded && (f->grounded >= ICE_GROUND || !STAGE(v)->plat[f->grounded - 1].solid)) {
                 f->grounded = 0;
                 f->drop = DROP_TICKS;
                 f->y += 2 * SUB;
@@ -929,6 +987,11 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
         if (m->vx0) f->vx = m->vx0 * f->facing;   /* a dash keeps its speed */
         if (m->proj && !f->spawned && f->frame == m->proj_frame) {
             spawn_proj(v, i, m->proj);
+            f->spawned = 1;
+        }
+        if (m->ice && !f->spawned && f->vy >= 0) {   /* the top of the hop: ice under his feet */
+            if (!f->ice_used) make_ice(v, i);
+            f->ice_used = 1;
             f->spawned = 1;
         }
         if (step_anim(f)) {
@@ -975,8 +1038,9 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
     }
 
     if (f->grounded) {
-        const platform_t *p = &st->plat[f->grounded - 1];
-        if (f->x < p->x0 * SUB || f->x > p->x1 * SUB) {   /* walked off */
+        platform_t ice;
+        const platform_t *p = plat_of(v, i, f->grounded, &ice);
+        if (!p || f->x < p->x0 * SUB || f->x > p->x1 * SUB) {   /* walked off, or the ice melted */
             f->grounded = 0;
             f->jumps = c->air_jumps;
         } else {
@@ -984,14 +1048,17 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
             f->vy = 0;
         }
     } else if (f->vy >= 0) {
-        for (int k = 0; k < st->nplat; k++) {
-            const platform_t *p = &st->plat[k];
+        for (int g = 1; g <= st->nplat + VS_ICE; g++) {   /* the stage's platforms, then its own ice */
+            platform_t ice;
+            const platform_t *p = plat_of(v, i, g <= st->nplat ? g : ICE_GROUND + g - st->nplat - 1, &ice);
+            if (!p) continue;
             if (f->x < p->x0 * SUB || f->x > p->x1 * SUB) continue;
             if (py > p->top * SUB || f->y < p->top * SUB) continue;
             if (!p->solid && f->drop > 0) continue;
             f->y = p->top * SUB;
             f->vy = 0;
-            f->grounded = k + 1;
+            f->grounded = g <= st->nplat ? g : ICE_GROUND + g - st->nplat - 1;
+            if (g <= st->nplat) f->ice_used = 0;   /* ice again once back on the stage */
             f->jumps = c->air_jumps;
             f->air_dodged = 0;
             f->helpless = 0;
@@ -1039,7 +1106,7 @@ static int land_hit(versus_t *v, int i, int j, int dmg, int bkb, int kbg, int an
         if (t->shield <= 0) shield_break(t, ct);
         return t->hitlag;
     }
-    t->damage += dmg;
+    t->damage += ct->armor ? dmg * ct->armor / 100 : dmg;
     if (t->damage > 999) t->damage = 999;
     const int s = bkb + KB_GROWTH * kbg * t->damage / ct->weight;
     t->vx = s * icos(angle) / 256 * facing;
@@ -1091,6 +1158,27 @@ static void combat(versus_t *v, const uint16_t *rom)
     }
 }
 
+/* Mr. Freeze's ice: melts after ICE_TICKS, and hurts whoever else touches it (once each) */
+static void ice_step(versus_t *v, const uint16_t *rom)
+{
+    for (int k = 0; k < VS_ICE; k++) {
+        vs_ice_t *e = &v->ice[k];
+        if (!e->t) continue;
+        if (++e->t > ICE_TICKS) { e->t = 0; continue; }
+        const int box[4] = { e->x - ICE_HALF, e->top - 8, e->x + ICE_HALF, e->top + 12 };
+        for (int j = 0; j < v->n; j++) {
+            if (j == e->owner || !can_be_hit(&v->f[j]) || (e->hit_mask >> j & 1)) continue;
+            int body[4][4];
+            const int nb = body_boxes(rom, &v->f[j], body);
+            int touch = 0;
+            for (int q = 0; q < nb && !touch; q++) touch = overlap(box, body[q]);
+            if (!touch) continue;
+            e->hit_mask |= 1 << j;
+            land_hit(v, e->owner, j, ICE_DMG, 300, 70, 75, v->f[j].x / SUB < e->x ? -1 : 1);
+        }
+    }
+}
+
 /* projectiles: fly, fall, run out, and hit */
 static void projectiles(versus_t *v, const uint16_t *rom)
 {
@@ -1125,7 +1213,17 @@ static void projectiles(versus_t *v, const uint16_t *rom)
             for (int q = 0; q < nb && !touch; q++) touch = overlap(box, body[q]);
             if (!touch) continue;
             p->hit_mask |= 1 << j;
-            land_hit(v, p->owner, j, d->dmg, d->bkb, d->kbg, d->angle, p->vx < 0 || (!p->vx && p->facing < 0) ? -1 : 1);
+            vs_fighter_t *t = &v->f[j];
+            if (d->freeze && t->state != ST_SHIELD) {   /* frozen where it stands, no damage */
+                t->state = ST_FROZEN;
+                t->hitstun = d->freeze;
+                t->t = 0;
+                t->vx = 0;
+                t->squat = t->ledge = 0;
+                t->last_hit_by = p->owner;
+            } else
+                land_hit(v, p->owner, j, d->freeze ? 2 : d->dmg, d->bkb, d->kbg, d->angle,
+                         p->vx < 0 || (!p->vx && p->facing < 0) ? -1 : 1);
             if (!d->follow) { p->kind = 0; break; }
         }
     }
@@ -1323,6 +1421,7 @@ void versus_step(versus_t *v, const uint16_t *rom, const uint16_t *buttons)
     if (!frozen) {
         combat(v, rom);
         projectiles(v, rom);
+        ice_step(v, rom);
     }
 
     update_camera(v, 0);
@@ -1446,6 +1545,7 @@ static int draw_fighter(spg_t *m, const vs_fighter_t *f, int slot, int n, uint32
             col = f->shield < SHIELD_MAX / 3 ? tint(col, 31, 10, 8, 8) : tint(col, 20, 26, 31, 9);
         else if (i && f->state == ST_DIZZY && (frame >> 3 & 1)) col = tint(col, 31, 31, 8, 8);
         else if (i && f->helpless) col = tint(col, 4, 4, 8, 6);   /* darker until it lands */
+        else if (i && f->state == ST_FROZEN) col = tint(col, 22, 29, 31, 11);   /* in the ice */
         m->vram[0x200 + (8 + slot) * 16 + i] = col;
     }
     return n;
@@ -1454,8 +1554,18 @@ static int draw_fighter(spg_t *m, const vs_fighter_t *f, int slot, int n, uint32
 static int draw_proj(spg_t *m, const vs_proj_t *p, int bank, int n, int cx, int cy)
 {
     const proj_def_t *d = &PROJS[p->kind - 1];
-    const uint32_t rec = BANK + m->rom[BANK + d->header + HEADER_FRAMES + d->f0 + (p->t / d->ticks) % (d->f1 - d->f0 + 1)];
-    n = draw_frame(m, rec, p->x / SUB - cx, p->y / SUB - cy, p->facing, 0x3051 | (uint16_t)(bank << 8), 0, 0, n);
+    if (d->tile) {   /* one tile */
+        if (n < 256) {
+            uint16_t *sp = &m->vram[0x300 + 4 * n++];
+            sp[0] = (uint16_t)(d->tile + (p->t / d->ticks) % d->tiles);
+            sp[1] = (uint16_t)(p->x / SUB - cx - 160);
+            sp[2] = (uint16_t)(128 - (p->y / SUB - cy));
+            sp[3] = (uint16_t)(0x3051 | bank << 8 | (p->facing < 0 ? 4 : 0));
+        }
+    } else {
+        const uint32_t rec = BANK + m->rom[BANK + d->header + HEADER_FRAMES + d->f0 + (p->t / d->ticks) % (d->f1 - d->f0 + 1)];
+        n = draw_frame(m, rec, p->x / SUB - cx, p->y / SUB - cy, p->facing, 0x3051 | (uint16_t)(bank << 8), 0, 0, n);
+    }
     for (int i = 0; i < 16; i++) m->vram[0x200 + bank * 16 + i] = m->rom[PALETTES + 16 * d->pal + i];
     return n;
 }
@@ -1487,6 +1597,18 @@ void versus_present(const versus_t *v, spg_t *m)
         if (!alive(f)) continue;
         if (f->invuln && (v->frame >> 2 & 1)) continue;   /* blinks while invulnerable */
         n = draw_fighter(m, f, i, n, v->frame, cx, cy);
+    }
+    /* Mr. Freeze's ice: cloud tiles in a row, in his palette (his slot's bank), fading at the end */
+    for (int k = 0; k < VS_ICE; k++) {
+        const vs_ice_t *e = &v->ice[k];
+        if (!e->t || (e->t > ICE_TICKS - 15 && (e->t >> 1 & 1))) continue;
+        for (int x = e->x - ICE_HALF + 8; x < e->x + ICE_HALF && n < 256; x += 16) {
+            uint16_t *sp = &m->vram[0x300 + 4 * n++];
+            sp[0] = (uint16_t)(ICE_TILE + ((x / 16) & 1) * 3);
+            sp[1] = (uint16_t)(x - cx - 160);
+            sp[2] = (uint16_t)(128 - (e->top + 6 - cy));
+            sp[3] = (uint16_t)(0x3051 | (8 + e->owner) << 8);
+        }
     }
     /* projectiles: each kind on screen gets a palette bank the stage leaves free */
     int bank_of[NPROJ + 1] = { 0 }, next_bank = 0, last = 0;

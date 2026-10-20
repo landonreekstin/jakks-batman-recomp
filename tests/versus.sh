@@ -10,6 +10,8 @@
 #   - moves: Batman's Batarang, glide and recovery (inputs/versus-specials.txt);
 #   - ledges: walking off the floor catches its ledge, Up jumps back up (inputs/versus-ledge.txt);
 #     on the Clock Tower the grapnel pulls Batman up to a ledge, and he climbs on (versus-grapnel.txt);
+#   - Mr. Freeze: the freeze shot freezes with no damage, his ice holds him up, then melts
+#     (inputs/versus-freeze.txt);
 #   - character select: P1 picks Bane and adds a fifth fighter (inputs/versus-select.txt);
 #   - the title menu's Versus item: Down twice and A pick it (inputs/versus-menu.txt), and the
 #     game without the item is untouched (same state hash as a run without --versus-menu up to
@@ -75,6 +77,11 @@ check "grapnel: climbed onto the platform" grep -q 'P1 BATMAN .* at [0-9]*,320 o
 out=$(vs --stage 1 --players 4 --frames 20000)
 echo "$out" | sed 's/^/  /'
 check "a 4-CPU match on the Clock Tower finishes" grep -qE 'matches [1-9]' <<<"$out"
+
+fz=(--players 2 --bots none --chars 5,1 --input "$here/tests/inputs/versus-freeze.txt")
+check "freeze: frozen, no damage" grep -q 'P2 JOKER .* damage   0% .* state 10 ' <(vs "${fz[@]}" --frames 200)
+check "freeze: standing on his ice" grep -q 'P1 MR.FREEZE .* at 145,150 on 100 ' <(vs "${fz[@]}" --frames 300)
+check "freeze: the ice melts" grep -q 'P1 MR.FREEZE .* at 145,208 on 1 ' <(vs "${fz[@]}" --frames 380)
 
 out=$(vs --select --players 4 --bots 2,3,4 --input "$here/tests/inputs/versus-select.txt" --frames 120)
 check "select: P1 picked Bane" grep -q 'P1 BANE .* human stocks 3' <<<"$out"
