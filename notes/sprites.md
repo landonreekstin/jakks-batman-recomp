@@ -103,7 +103,7 @@ draws all 183 frames correctly assembled.
   | 0x05A2E5 | the yellow staff fighter (Street Party, 2nd half), 130 frames |
   | 0x05A36F | the bomb thrower |
   | 0x05F16C | a thug with fall, lie and get-up frames (78–88) |
-  | 0x05D2CE | Harley Quinn (mallet) |
+  | 0x05D2CE | the Joker (mallet, gun; was listed as Harley Quinn, see `notes/characters.md`) |
 
   Palettes: staff fighter at 0x051A00, thug at 0x051B50.
 - **Batman's frames by use.**

@@ -1,0 +1,11 @@
+# versus (batman-rt --versus --players 2 --bots none): P1 (Batman) walks up to P2 (Joker) and
+# does the three-hit combo, 3 + 3 + 6 percent; the last hit launches.
+# frame P1 P2 (masks: 8000 up 4000 down 2000 left 1000 right 0800 jump 0200 attack)
+150 1000 0000
+190 0000 0000
+200 0200 0000
+201 0000 0000
+210 0200 0000
+211 0000 0000
+235 0200 0000
+236 0000 0000

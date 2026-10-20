@@ -11,13 +11,22 @@
     sprites.py import <rom> <in.png> [name]       prints a mod.txt with `words` lines for the tiles
                                                   that differ from the ROM (in.png as written by
                                                   export, edited with any of its 16 colours)
+    sprites.py chars  <rom> <out.png>             every character in the bank: its header, frame
+                                                  count and palette ids, and a few of its frames
+    --char HEADER [--pal N]                       before the command: work on another character of
+                                                  the bank (header offset in hex, from `chars`)
+                                                  instead of Batman, in its palette id N (default
+                                                  its first)
 
 Batman's sprite bank starts at 0x051C40; offsets inside it are relative to that.
   - 0x054B4B: 183 frame offsets.
   - A frame is: count, flags, ?, k, then k box words, then 3 words, then count pieces of
     (dx, dy, tile index). dx/dy step from the previous piece (y down); the first is from the
     frame origin. Checked against the sprite list of a --vdump. Tile number = index + 0x400, a 16x16 4bpp tile at ROM word tile * 64.
-  - The palette is bank 14, 16 words at 0x051870."""
+  - The palette is bank 14, 16 words at 0x051870.
+The bank's word 0 is the number of characters, then one offset per character to its header:
+nframes, up to 7 palette ids (0xFFFF: none), a default box (4 words), then the frame list.
+Palette id N is the 16 words at PALETTES + 16 * N (Batman's id 3 = 0x051870)."""
 import os
 import struct
 import sys
@@ -31,6 +40,8 @@ FRAME_LIST = 0x054B4B
 NFRAMES = 183
 TILE_BASE = 0x400
 PALETTE = 0x051870
+PALETTES = 0x051840
+HEADER_FRAMES = 0x0C   # the frame list's offset in a character header
 SHA = "4ec5438d16e222cc624820f45579071b8f8a4e91c65ae76e5425565509271766"
 
 
@@ -128,6 +139,42 @@ def pixels_to_words(rows):
 
 def palette(rom):
     return [rgb(rom[PALETTE + i]) for i in range(16)]
+
+
+def select_char(rom, header, pal=None):
+    """make the commands work on the character whose header is at bank offset `header`"""
+    global FRAME_LIST, NFRAMES, PALETTE
+    a = BANK + header
+    FRAME_LIST, NFRAMES = a + HEADER_FRAMES, rom[a]
+    PALETTE = PALETTES + 16 * (rom[a + 1] if pal is None else pal)
+
+
+def characters(rom):
+    """[(header offset, nframes, palette ids)] for every distinct header in the bank"""
+    hs = sorted(set(rom[BANK + 1:BANK + 1 + rom[BANK]]))
+    return [(h, rom[BANK + h], [v for v in rom[BANK + h + 1:BANK + h + 8] if v != 0xFFFF]) for h in hs]
+
+
+def cmd_chars(rom, out):
+    cs = characters(rom)
+    cell, shown = 72, 6
+    img = [[(40, 40, 48)] * (cell * shown) for _ in range(cell * len(cs))]
+    for row, (h, n, pals) in enumerate(cs):
+        select_char(rom, h)
+        pal = palette(rom)
+        for j in range(min(shown, n)):
+            f = j * n // shown
+            ox, oy = j * cell + cell // 2, row * cell + cell - 14
+            for x, y, t in frames(rom)[f]:
+                px = tile_pixels(rom, t)
+                for ty in range(16):
+                    for tx in range(16):
+                        X, Y = ox + x - 8 + tx, oy + y - 8 + ty
+                        if px[ty][tx] and j * cell <= X < (j + 1) * cell and row * cell <= Y < (row + 1) * cell:
+                            img[Y][X] = pal[px[ty][tx]]
+        label(img, 2, row * cell + 2, f"{h:x}")
+        print(f"{h:04x}  {n:3d} frames  palettes {' '.join(f'{p:x}' for p in pals)}")
+    write_png(out, len(img[0]), len(img), img)
 
 
 GLYPHS = {  # 3x5 digits and hex letters for labels
@@ -296,6 +343,15 @@ def cmd_import(rom, path, name=None):
 
 def main():
     a = sys.argv[1:]
+    char = pal = None
+    while a and a[0].startswith("--"):
+        if a[0] == "--char":
+            char = int(a[1], 16)
+        elif a[0] == "--pal":
+            pal = int(a[1], 16)
+        else:
+            sys.exit(f"unknown option {a[0]}")
+        a = a[2:]
     if len(a) < 3:
         print(__doc__)
         return 2
@@ -303,7 +359,9 @@ def main():
         cmd_import(load_rom(a[1]), a[2], a[3] if len(a) > 3 else None)
         return 0
     rom = load_rom(a[1], a[3] if len(a) > 3 else None)
-    {"frames": cmd_frames, "tiles": cmd_tiles, "export": cmd_export}[a[0]](rom, a[2])
+    if char is not None:
+        select_char(rom, char, pal)
+    {"frames": cmd_frames, "tiles": cmd_tiles, "export": cmd_export, "chars": cmd_chars}[a[0]](rom, a[2])
     return 0
 
 

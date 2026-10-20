@@ -1,0 +1,9 @@
+# versus (batman-rt --versus --players 2 --bots none, the Catwalk): P1 (Batman) walks off the
+# floor's left end and catches the ledge on the way down (state 8, hanging at x 56), then Up
+# jumps back up from it and he lands on the floor.
+# frame P1 P2 (masks: 8000 up 2000 left 1000 right)
+150 2000 0000
+186 0000 0000
+260 8000 0000
+261 1000 0000
+300 0000 0000

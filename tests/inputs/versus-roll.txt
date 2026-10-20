@@ -1,0 +1,7 @@
+# versus (batman-rt --versus --players 2 --bots none): P1 shields, then rolls right with Right
+# (16 ticks of 3.5 px: 136 -> 192 on the map, ending turned back towards where it came from).
+# frame P1 P2 (masks: 1000 right 0080 block)
+160 0080 0000
+170 1080 0000
+171 0080 0000
+200 0000 0000

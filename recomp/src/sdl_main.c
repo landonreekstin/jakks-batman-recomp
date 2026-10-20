@@ -28,7 +28,23 @@
  * the session can be replayed in MAME and batman-rt by tests/check.sh. A recording
  * starts from a blank EEPROM, like the MAME capture, and saves to <script>.sav.
  *
- * Mods (mod.h) come from --mods, or else from <mods-dir>/enabled.txt (default dir "mods"). */
+ * Mods (mod.h) come from --mods, or else from <mods-dir>/enabled.txt (default dir "mods").
+ *
+ * --versus [--players N] [--stocks N] [--stage N] [--kb2] [--quick]: the fighting mode (versus.h) instead of
+ *       the game. It opens on the character select (Left/Right pick, B ready, X back; P1's
+ *       Up/Down add or remove CPUs); --quick goes straight to a fight with the default picks.
+ *       P1 has the keyboard (arrows, Z = jump, X = attack, C = special, V = block, Enter = pause)
+ *       and the first controller; --kb2 makes P2 a human on W A S D, J, K, L, Left Shift, P. Each
+ *       further controller takes the next CPU slot, also when plugged in during a match. On a
+ *       controller: south = attack, east = special, west/north = jump, shoulders/triggers =
+ *       block, Start = pause; Up also jumps. B (or A or Menu) on the result screen plays again.
+ *       Paused, Special leaves the match for the select screen.
+ * The story game's title menu gets a third item, Versus (vsmenu.h; --no-versus-menu leaves the
+ *       menu as it was, and recordings and netplay always do). Special on the select screen goes
+ *       back to the title menu, as it was.
+ * --versus --host [PORT] hosts an online versus match (vsnet.h; up to 8 machines, each one player
+ *       with the keyboard or a controller; guests take CPU slots as they join, any time);
+ *       --versus --join ADDR[:PORT] joins one. Pause, rewind, states and fast forward are off. */
 #include <SDL.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -45,6 +61,9 @@
 #include "rom.h"
 #include "spg.h"
 #include "state.h"
+#include "versus.h"
+#include "vsmenu.h"
+#include "vsnet.h"
 
 #define OUT_SCALE 4   /* filter output is 1280x960; SDL scales that to the window */
 #define FF_FRAMES 4   /* emulated frames per displayed frame while fast-forwarding */
@@ -179,6 +198,31 @@ static uint16_t key_buttons(int player)
     return b;
 }
 
+/* versus: a controller in the Smash-like layout (versus.h buttons) */
+static uint16_t vs_pad_buttons(SDL_GameController *pad)
+{
+    if (!pad) return 0;
+    uint16_t b = pad_buttons(pad) & (VS_UP | VS_DOWN | VS_LEFT | VS_RIGHT | VS_MENU);
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_A)) b |= VS_ATTACK;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_B)) b |= VS_SPECIAL;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_X) ||
+        SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_Y)) b |= VS_JUMP;
+    if (SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_LEFTSHOULDER) ||
+        SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) ||
+        SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000 ||
+        SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000) b |= VS_BLOCK;
+    return b;
+}
+
+/* versus: the keyboard, P1 or P2 (the co-op keys plus a block key) */
+static uint16_t vs_key_buttons(int player)
+{
+    const Uint8 *k = SDL_GetKeyboardState(NULL);
+    uint16_t b = key_buttons(player);
+    if (k[player ? SDL_SCANCODE_LSHIFT : SDL_SCANCODE_V]) b |= VS_BLOCK;
+    return b;   /* key_buttons' A, B and X are jump, attack and special */
+}
+
 static void load_config(const char *path)
 {
     FILE *f = fopen(path, "r");
@@ -235,6 +279,7 @@ int main(int argc, char **argv)
     net_opts_t net_o = { 2, 0, 0, 0 };
     long max_frames = -1;
     const char *record_path = NULL, *mod_list = NULL, *mods_dir = "mods";
+    int versus = 0, vs_players = 4, vs_stocks = 3, vs_kb2 = 0, vs_quick = 0, vs_menu = 1, vs_stage = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--save") && i + 1 < argc) snprintf(save_path, sizeof(save_path), "%s", argv[++i]);
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
@@ -243,6 +288,13 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
         else if (!strcmp(argv[i], "--mods-dir") && i + 1 < argc) mods_dir = argv[++i];
         else if (!strcmp(argv[i], "--coop")) coop = 1;
+        else if (!strcmp(argv[i], "--versus")) versus = 1;
+        else if (!strcmp(argv[i], "--players") && i + 1 < argc) vs_players = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--stocks") && i + 1 < argc) vs_stocks = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--kb2")) vs_kb2 = 1;
+        else if (!strcmp(argv[i], "--quick")) vs_quick = 1;
+        else if (!strcmp(argv[i], "--stage") && i + 1 < argc) vs_stage = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--no-versus-menu")) vs_menu = 0;
         else if (!strcmp(argv[i], "--host")) {
             host_port = NET_PORT;
             if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') host_port = atoi(argv[++i]);
@@ -263,10 +315,15 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100] [--coop] [--host [port] | --join addr[:port]] [--net-delay N]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100] [--coop] [--host [port] | --join addr[:port]] [--net-delay N] [--versus [--players N] [--stocks N] [--stage N] [--kb2] [--quick]] [--no-versus-menu]\n", argv[0]);
         return 2;
     }
-    if (host_port || join) {
+    if (versus && (coop || record_path)) {
+        fprintf(stderr, "--versus doesn't go with --coop or --record\n");
+        return 2;
+    }
+    const int vs_online = versus && (host_port || join);   /* vsnet.h, not the co-op netplay */
+    if ((host_port || join) && !vs_online) {
         coop = 1;
         if (record_path) { fprintf(stderr, "--record doesn't work with netplay\n"); return 2; }
     }
@@ -308,6 +365,9 @@ int main(int argc, char **argv)
     static spg_t m;
     spg_init(&m, rom);
     if (coop) coop_attach(&m);
+    /* Versus on the title menu: not in recordings (MAME has no such item) or online */
+    if (record_path || host_port || join) vs_menu = 0;
+    if (vs_menu) vsmenu_attach(&m);
     mods_attach(&m);
     FILE *sf = rec ? NULL : fopen(save_path, "rb");
     if (sf) {
@@ -316,6 +376,7 @@ int main(int argc, char **argv)
     }
     uint8_t rom_hash[32];
     mods_content_id(rom, rom_hash);
+    if (vs_menu) vsmenu_patch(rom);   /* after the content id, so save states still load */
     int slot = 0;
     /* netplay. The host plays on its own while nobody is connected, and listens again when
      * player 2 leaves. The guest keeps trying to join until the host is there, and after the
@@ -338,7 +399,11 @@ int main(int argc, char **argv)
             }
         } else if (c && c == strchr(join_addr, ':')) { *c = 0; join_port = atoi(c + 1); }
     }
-    if (host_port && !(net = net_host(host_port, &net_o))) return 1;
+    if (host_port && !vs_online && !(net = net_host(host_port, &net_o))) return 1;
+    vsnet_t *vnet = NULL;
+    int vnet_on = 0, vnet_over = 0, vnet_retry = 0;
+    char vnet_wait[160] = "";
+    if (host_port && vs_online && !(vnet = vsnet_host(host_port, &net_o, rom_hash))) return 1;
     spg_reset(&m);
     mods_reset(&m);
     m.render = 1;
@@ -376,11 +441,48 @@ int main(int argc, char **argv)
     for (int i = 0; i < SDL_NumJoysticks() && !pads[1]; i++)
         if (SDL_IsGameController(i)) pads[pads[0] ? 1 : 0] = SDL_GameControllerOpen(i);
 
+    /* versus: slot i's controller; slot 0 also has the keyboard. A slot without a human is a bot. */
+    static versus_t vs;
+    SDL_GameController *vpads[VS_MAX] = {NULL};
+    int vs_paused = 0, vs_start = versus, vs_from_title = 0;
+    static spg_snap_t title_snap;   /* the game at its title menu, while a versus match runs */
+    /* versus rewind: every frame, VS_REWIND deep (60 s) */
+    enum { VS_REWIND = 3600 };
+    static versus_t vs_rewind[VS_REWIND];
+    int vs_rewind_head = 0, vs_rewind_len = 0;
+    versus = 0;
+
     const Uint64 freq = SDL_GetPerformanceFrequency();
     const double frame_ticks = (double)freq / 60.0;
     double next = (double)SDL_GetPerformanceCounter();
     int running = 1, shot = 0;
     while (running && (max_frames < 0 || (long)m.frame < max_frames)) {
+        if (vs_start) {   /* from --versus, or the title menu's Versus */
+            vs_start = 0;
+            versus = 1;
+            vs_rewind_len = 0;
+            vs_paused = 0;
+            if (vs_players < 2) vs_players = 2;
+            if (vs_players > VS_MAX) vs_players = VS_MAX;
+            int next_slot = vs_kb2 ? 2 : 1;
+            vpads[0] = pads[0];
+            if (pads[1] && next_slot < vs_players) vpads[next_slot++] = pads[1];
+            for (int i = 0; i < SDL_NumJoysticks() && next_slot < vs_players; i++) {
+                if (!SDL_IsGameController(i)) continue;
+                SDL_GameController *p = SDL_GameControllerOpen(i);
+                int have = 0;
+                for (int k = 0; k < VS_MAX; k++) have |= vpads[k] == p;
+                if (p && !have) vpads[next_slot++] = p;
+            }
+            uint32_t bots = 0;
+            for (int i = 1; i < vs_players; i++)
+                if (!vpads[i] && !(i == 1 && vs_kb2)) bots |= 1u << i;
+            if (vs_online) bots = 0xFE;   /* guests take CPU slots as they join */
+            versus_init(&vs, m.rom, vs_players, bots, vs_stocks, vs_online ? 1 : (uint32_t)SDL_GetPerformanceCounter(),
+                        vs_from_title || !vs_quick);
+            if (vs_stage) versus_set_stage(&vs, vs_stage);
+            SDL_SetWindowTitle(win, "The Batman: Versus");
+        }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
@@ -388,6 +490,18 @@ int main(int argc, char **argv)
             else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
                 char path[1100];
                 snprintf(path, sizeof(path), "%s.st%d", base, slot);
+                if (vs_online && (e.key.keysym.sym == SDLK_F5 || e.key.keysym.sym == SDLK_F8)) {
+                    osd("Not while playing online");
+                    continue;
+                }
+                if (versus && (e.key.keysym.sym == SDLK_F5 || e.key.keysym.sym == SDLK_F8)) {
+                    /* a match's state is its versus_t: <base>.vs<slot> */
+                    snprintf(path, sizeof(path), "%s.vs%d", base, slot);
+                    if (e.key.keysym.sym == SDLK_F5) osd(versus_save(&vs, path) ? "Saved match %d" : "Save FAILED", slot);
+                    else if (versus_load(&vs, path)) { osd("Loaded match %d", slot); vs_rewind_len = 0; }
+                    else osd("No match in slot %d", slot);
+                    continue;
+                }
                 if ((net || join) && (e.key.keysym.sym == SDLK_F8 || (join && e.key.keysym.sym == SDLK_F5))) {
                     osd("Not while playing online");
                     continue;
@@ -436,6 +550,33 @@ int main(int argc, char **argv)
                 default: break;
                 }
             }
+            else if (versus && e.type == SDL_CONTROLLERDEVICEADDED) {
+                /* takes the first CPU slot (or slot 1's pad if P1 has none) */
+                SDL_GameController *p = SDL_GameControllerOpen(e.cdevice.which);
+                int have = 0;
+                for (int k = 0; k < VS_MAX; k++) have |= vpads[k] == p;
+                if (p && !have) {
+                    if (!vpads[0]) vpads[0] = p;
+                    else for (int k = 1; k < vs.n; k++)
+                        if (vs.f[k].bot) {
+                            vpads[k] = p;
+                            vs.f[k].bot = 0;
+                            osd("P%d joined", k + 1);
+                            break;
+                        }
+                }
+            }
+            else if (versus && e.type == SDL_CONTROLLERDEVICEREMOVED) {
+                for (int k = 0; k < VS_MAX; k++)
+                    if (vpads[k] && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(vpads[k])) == e.cdevice.which) {
+                        SDL_GameControllerClose(vpads[k]);
+                        vpads[k] = NULL;
+                        if (k && !(k == 1 && vs_kb2) && k < vs.n) {
+                            vs.f[k].bot = 1;
+                            osd("P%d is a CPU now", k + 1);
+                        }
+                    }
+            }
             else if (e.type == SDL_CONTROLLERDEVICEADDED && !pads[1]) {
                 SDL_GameController *p = SDL_GameControllerOpen(e.cdevice.which);
                 if (p && p != pads[0]) pads[pads[0] ? 1 : 0] = p;
@@ -444,7 +585,7 @@ int main(int argc, char **argv)
 
         const Uint8 *keys = SDL_GetKeyboardState(NULL);
         const int ff = keys[SDL_SCANCODE_TAB] && !net;
-        if (!net && !net_over && (host_port || join) && net_retry-- <= 0) {
+        if (!vs_online && !net && !net_over && (host_port || join) && net_retry-- <= 0) {
             net = host_port ? net_host(host_port, &net_o) : net_join(join_addr, join_port, &net_o, rom_hash);
             net_retry = 120;
         }
@@ -457,6 +598,7 @@ int main(int argc, char **argv)
                 snprintf(net_wait, sizeof(net_wait), "%s", net_reason(net));
                 net_over = net_refused(net);
                 net_close(net);
+    vsnet_close(vnet);
                 net = NULL;
             }
         }
@@ -474,7 +616,98 @@ int main(int argc, char **argv)
             if (host_port && m.frame % 300 == 0) save_eeprom(&m, save_path);
         }
         for (const char *ev; net && (ev = net_event(net));) osd("%s", ev);
-        if (join || (net && net_on)) {
+        if (versus && vs_online) {
+            /* online (vsnet.h): this machine plays one slot, with the keyboard or the first pad */
+            if (join && !vnet && !vnet_over && vnet_retry-- <= 0) {
+                vnet = vsnet_join(join_addr, join_port, &net_o, rom_hash);
+                vnet_retry = 120;
+            }
+            if (vnet && join && !vnet_on) {
+                const int r = vsnet_wait_start(vnet, &vs);
+                if (r > 0) { vnet_on = 1; vnet_wait[0] = 0; }
+                else if (r < 0) {
+                    snprintf(vnet_wait, sizeof(vnet_wait), "%s", vsnet_reason(vnet));
+                    vnet_over = vsnet_refused(vnet);
+                    vsnet_close(vnet);
+                    vnet = NULL;
+                }
+            }
+            if (vnet && (host_port || vnet_on)) {
+                const uint16_t local = vs_key_buttons(0) | vs_pad_buttons(vpads[0]) | vs_pad_buttons(pads[1]);
+                const int r = vsnet_tick(vnet, &vs, m.rom, local, VSNET_NO_END);
+                for (const char *ev; (ev = vsnet_event(vnet));) osd("%s", ev);
+                if (r < 0) {   /* the host left: wait for it again */
+                    snprintf(vnet_wait, sizeof(vnet_wait), "%s", vsnet_reason(vnet));
+                    vsnet_close(vnet);
+                    vnet = NULL;
+                    vnet_on = 0;
+                    vnet_retry = 60;
+                }
+            }
+            versus_present(&vs, &m);
+            m.frame = vs.frame;
+            if (vnet && (host_port || vnet_on)) {
+                char line[200];
+                snprintf(line, sizeof(line), "%s  (you: P%d)", vsnet_status(vnet), vsnet_slot(vnet) + 1);
+                osd_text(m.framebuffer, PPU_W, PPU_H, 4, PPU_H - 12, 1, line);
+            } else if (join) {
+                char line[320];
+                if (vnet_over) snprintf(line, sizeof(line), "Can't join %s", join_addr);
+                else snprintf(line, sizeof(line), "Waiting for the match at %s...", join_addr);
+                osd_text(m.framebuffer, PPU_W, PPU_H, 8, 100, 1, line);
+                if (vnet_wait[0]) osd_text(m.framebuffer, PPU_W, PPU_H, 8, 114, 1, vnet_wait);
+            }
+        } else if (versus) {
+            uint16_t b[VS_MAX] = {0};
+            for (int k = 0; k < vs.n; k++) b[k] = vs_pad_buttons(vpads[k]);
+            b[0] |= vs_key_buttons(0);
+            if (vs_kb2) b[1] |= vs_key_buttons(1);
+            /* Menu pauses the fight; on the result screen it plays again (versus.c) */
+            static uint16_t menu_prev;
+            uint16_t menu = 0;
+            for (int k = 0; k < vs.n; k++) if (!vs.f[k].bot && (b[k] & VS_MENU)) menu |= 1u << k;
+            if (vs.phase == VS_FIGHT && (menu & ~menu_prev)) vs_paused = !vs_paused;
+            menu_prev = menu;
+            /* paused: Special leaves the match for the select screen */
+            static uint16_t special_prev;
+            uint16_t special = 0;
+            for (int k = 0; k < vs.n; k++) if (!vs.f[k].bot && (b[k] & VS_SPECIAL)) special |= 1u << k;
+            if (vs_paused && (special & ~special_prev)) {
+                versus_rematch(&vs, m.rom, 1);
+                vs_paused = 0;
+            }
+            special_prev = special;
+            if (keys[SDL_SCANCODE_BACKSPACE]) {   /* rewind, a frame per displayed frame */
+                if (vs_rewind_len) {
+                    vs_rewind_head = (vs_rewind_head + VS_REWIND - 1) % VS_REWIND;
+                    vs_rewind_len--;
+                    vs = vs_rewind[vs_rewind_head];
+                }
+            } else if (!vs_paused)
+                for (int i = 0; i < (ff ? FF_FRAMES : 1); i++) {
+                    vs_rewind[vs_rewind_head] = vs;
+                    vs_rewind_head = (vs_rewind_head + 1) % VS_REWIND;
+                    if (vs_rewind_len < VS_REWIND) vs_rewind_len++;
+                    versus_step(&vs, m.rom, b);
+                }
+            if (vs.quit) {   /* backed out of the select screen: to the title menu, if it came from there */
+                vs.quit = 0;
+                if (vs_from_title) {
+                    spg_restore(&m, &title_snap);
+                    versus = vs_from_title = 0;
+                    SDL_SetWindowTitle(win, "The Batman");
+                    if (audio_dev) SDL_ClearQueuedAudio(audio_dev);
+                }
+            }
+            if (versus) {
+                versus_present(&vs, &m);
+                if (vs_paused) {
+                    osd_text(m.framebuffer, PPU_W, PPU_H, 112, 96, 3, "PAUSE");
+                    osd_text(m.framebuffer, PPU_W, PPU_H, 84, 128, 1, "MENU: GO ON   SPECIAL: QUIT");
+                }
+                if (!vs_from_title) m.frame = vs.frame;
+            }
+        } else if (join || (net && net_on)) {
             /* netplay drives the frames (above), or the guest waits or has stopped */
         } else if (keys[SDL_SCANCODE_BACKSPACE]) {
             /* rewind: step back one snapshot per displayed frame (REWIND_EVERY x speed), silently */
@@ -510,6 +743,13 @@ int main(int argc, char **argv)
                 mods_frame(&m);
                 audio_flush();
                 if (m.frame % 300 == 0) save_eeprom(&m, save_path);
+                if (m.versus_request) {   /* Versus on the title menu */
+                    m.versus_request = 0;
+                    spg_snapshot(&m, &title_snap);
+                    vs_start = vs_from_title = 1;
+                    if (rec) stop_recording(&rec, record_path, m.frame);
+                    break;
+                }
             }
             if (!running) break;
         }
@@ -560,6 +800,8 @@ int main(int argc, char **argv)
     if (rec) stop_recording(&rec, record_path, m.frame);
     for (int i = 0; i < 2; i++)
         if (pads[i]) SDL_GameControllerClose(pads[i]);
+    for (int i = 0; i < VS_MAX; i++)
+        if (vpads[i] && vpads[i] != pads[0] && vpads[i] != pads[1]) SDL_GameControllerClose(vpads[i]);
     if (volume != volume_at_start || filter != filter_at_start) save_config(cfg_path, filter);
     if (audio_dev) SDL_CloseAudioDevice(audio_dev);
     SDL_DestroyTexture(tex);

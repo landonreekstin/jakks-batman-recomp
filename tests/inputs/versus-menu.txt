@@ -1,0 +1,9 @@
+# batman-rt --versus-menu: on the title menu (from vblank ~600) Down twice puts the cursor on
+# Versus, under New Game and Continue; A picks it.
+# vblank P1 (masks: 8000 up 4000 down 0800 A)
+1000 4000
+1005 0000
+1100 4000
+1105 0000
+1300 0800
+1305 0000

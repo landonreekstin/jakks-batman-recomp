@@ -24,6 +24,21 @@
  *                                [--net-delay N] input delay (2), [--net-sim LAT,JITTER,LOSS%]
  *                                a simulated network (ms), [--net-log f] the settled inputs as an
  *                                input script, [--net-start f] the starting state, for replays
+ *             [--versus]         the fighting mode (versus.h) instead of the game: [--players N] (4),
+ *                                [--bots 1,3 | all | none] the CPU slots (default: those the
+ *                                --input script has no column for, or all without one),
+ *                                [--stocks N] (3), [--seed N], [--stage N] (0 Catwalk, 1 Clock
+ *                                Tower), [--select] open on the
+ *                                character select (versus.h). --input lines carry one mask per
+ *                                player. --snap/--snap-frames, --hash, --state-save-at and
+ *                                --state-load work on the match.
+ *                                With --host PORT / --join ADDR[:PORT] the match is played online
+ *                                (vsnet.h): each process plays its slot's column of --input;
+ *                                the host waits for --net-players N machines (2), then all run to
+ *                                --frames and print the match hash. BATMAN_NET_CORRUPT=frame
+ *                                knocks a guest's P1 off at that frame, to test the resync.
+ *             [--versus-menu]    the title menu gets a Versus item (vsmenu.h); picking it prints
+ *                                "versus requested at vblank N" (the game itself goes on)
  *             [--watch out.txt spec] log CPU accesses as "vblank W|R pc addr value"; spec is a
  *                                comma list of w:LO-HI (writes), r:LO-HI (data reads), from:N
  *                                and to:N (vblanks), fn:ADDR (only inside calls of the function at
@@ -44,6 +59,9 @@
 #include "rom.h"
 #include "spg.h"
 #include "state.h"
+#include "versus.h"
+#include "vsmenu.h"
+#include "vsnet.h"
 
 #include <time.h>
 
@@ -55,7 +73,7 @@ static const char *vdump_dir;
 static crt_t *snap_crt;
 static int snap_filter;
 static uint32_t *snap_buf;
-static struct input_rec { uint32_t frame; uint16_t mask, mask2; } *inputs;
+static struct input_rec { uint32_t frame; uint16_t mask[VS_MAX]; } *inputs;
 static int cap_inputs;
 static int n_inputs;
 
@@ -64,15 +82,16 @@ static int load_inputs(const char *path)
     FILE *f = fopen(path, "r");
     if (!f) return 0;
     char line[256];
-    unsigned fr, mask, mask2;
+    unsigned fr, mk[VS_MAX];
     while (fgets(line, sizeof(line), f)) {
-        const int k = sscanf(line, "%u %x %x", &fr, &mask, &mask2);
+        const int k = sscanf(line, "%u %x %x %x %x %x %x %x %x", &fr, &mk[0], &mk[1], &mk[2], &mk[3],
+                             &mk[4], &mk[5], &mk[6], &mk[7]);
         if (k >= 2) {
             if (n_inputs == cap_inputs)
                 inputs = realloc(inputs, (size_t)(cap_inputs = cap_inputs ? cap_inputs * 2 : 4096) * sizeof(*inputs));
             inputs[n_inputs].frame = fr;
-            inputs[n_inputs].mask = (uint16_t)mask;
-            inputs[n_inputs++].mask2 = k == 3 ? (uint16_t)mask2 : 0;
+            for (int i = 0; i < VS_MAX; i++) inputs[n_inputs].mask[i] = i < k - 1 ? (uint16_t)mk[i] : 0;
+            n_inputs++;
         }
     }
     fclose(f);
@@ -137,8 +156,8 @@ static void dump_frame(spg_t *m)
     static int next_input; /* scripts are in vblank order */
     while (next_input < n_inputs && inputs[next_input].frame <= m->frame) {
         if (inputs[next_input].frame == m->frame) {
-            m->buttons = inputs[next_input].mask;
-            m->coop.buttons2 = inputs[next_input].mask2;
+            m->buttons = inputs[next_input].mask[0];
+            m->coop.buttons2 = inputs[next_input].mask[1];
         }
         next_input++;
     }
@@ -152,7 +171,7 @@ static void dump_frame(spg_t *m)
 }
 
 /* the script's buttons for one player at frame f (the last line at or before f) */
-static uint16_t script_at(uint32_t f, int p2)
+static uint16_t script_at(uint32_t f, int player)
 {
     int lo = 0, hi = n_inputs;   /* first line after f */
     while (lo < hi) {
@@ -160,7 +179,7 @@ static uint16_t script_at(uint32_t f, int p2)
         if (inputs[mid].frame <= f) lo = mid + 1;
         else hi = mid;
     }
-    return lo ? (p2 ? inputs[lo - 1].mask2 : inputs[lo - 1].mask) : 0;
+    return lo ? inputs[lo - 1].mask[player] : 0;
 }
 
 static uint32_t net_corrupt_at;   /* test: BATMAN_NET_CORRUPT=frame moves P1 in this process only */
@@ -232,6 +251,86 @@ static int run_netplay(spg_t *m, const uint8_t rom_hash[32], int host_port, cons
     return ok;
 }
 
+/* the fighting mode: no CPU, versus.c steps the match and draws it into m's video state */
+static int run_versus(spg_t *m, unsigned frames, int players, uint32_t bots, int stocks, uint32_t seed, int select, int stage,
+                      int print_hash, const char *save, unsigned save_at, const char *load)
+{
+    static versus_t v;
+    versus_init(&v, m->rom, players, bots, stocks, seed, select);
+    if (stage) versus_set_stage(&v, stage);
+    if (load && !versus_load(&v, load)) return 0;
+    m->frame = v.frame;
+    while (v.frame < frames) {
+        if (save && v.frame == save_at && !versus_save(&v, save)) return 0;
+        uint16_t b[VS_MAX];
+        for (int i = 0; i < VS_MAX; i++) b[i] = script_at(v.frame, i);
+        versus_step(&v, m->rom, b);
+        m->frame = v.frame;
+        if (snap_dir && want_snap(v.frame)) versus_present(&v, m);
+        snap_frame(m);
+    }
+    if (save && v.frame == save_at && !versus_save(&v, save)) return 0;
+    fprintf(stderr, "versus: %u frames, phase %d, winner %d, matches %d\n", v.frame, v.phase, v.winner + 1, v.matches);
+    for (int i = 0; i < v.n; i++)
+        fprintf(stderr, "  P%d %-8s %s stocks %d damage %3d%% KOs %d falls %d at %d,%d on %d state %d shield %d\n",
+                i + 1, versus_char_name(v.f[i].ch), v.f[i].bot ? "cpu  " : "human", v.f[i].stocks, v.f[i].damage,
+                v.f[i].kos, v.f[i].falls, v.f[i].x / 256, v.f[i].y / 256, v.f[i].grounded, v.f[i].state,
+                v.f[i].shield / 256);
+    if (print_hash) printf("versus %016llx at frame %u\n", (unsigned long long)versus_hash(&v), v.frame);
+    return 1;
+}
+
+/* a versus match online (vsnet.h); see the usage at the top */
+static int run_versus_net(versus_t *v, const uint16_t *rom, const uint8_t id[32], int host_port, const char *join,
+                          const net_opts_t *o, unsigned frames, int fps, int players, const char *log_path)
+{
+    vsnet_t *n;
+    if (join) {
+        char addr[256];
+        int port = NET_PORT;
+        snprintf(addr, sizeof(addr), "%s", join);
+        char *c = strrchr(addr, ':');
+        if (c && c == strchr(addr, ':')) { *c = 0; port = atoi(c + 1); }
+        n = vsnet_join(addr, port, o, id);
+    } else n = vsnet_host(host_port, o, id);
+    if (!n) return 0;
+    FILE *log = NULL;
+    if (log_path) {
+        if (!(log = fopen(log_path, "w"))) { perror(log_path); vsnet_close(n); return 0; }
+        vsnet_log_inputs(n, log);
+    }
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    if (join) {
+        int r;
+        while ((r = vsnet_wait_start(n, v)) == 0) sleep_until(&t, 5000000);
+        if (r < 0) { fprintf(stderr, "vsnet: %s\n", vsnet_reason(n)); vsnet_close(n); return 0; }
+    } else
+        while (vsnet_players(n) < players) {   /* run nothing until everyone is in */
+            vsnet_tick(n, v, rom, 0, v->frame);
+            sleep_until(&t, 1000000000L / fps);
+        }
+    uint32_t corrupt_at = getenv("BATMAN_NET_CORRUPT") && join ? (uint32_t)atoi(getenv("BATMAN_NET_CORRUPT")) : 0;
+    int ok = 1, linger = 0;
+    uint64_t hash = 0;
+    for (;;) {
+        const int slot = vsnet_slot(n);
+        const uint16_t local = slot >= 0 ? script_at(vsnet_input_frame(n), slot) : 0;
+        const int r = vsnet_tick(n, v, rom, local, frames);
+        if (corrupt_at && v->frame == corrupt_at) { v->f[0].x += 8 * 256; corrupt_at = 0; }
+        if (vsnet_settled(n, v, frames)) {
+            if (!linger) hash = versus_hash(v);   /* final: later leaves would change the CPU slots */
+            if (++linger > fps) break;
+        } else if (r < 0) { ok = 0; break; }
+        sleep_until(&t, 1000000000L / fps);
+    }
+    printf("versus %016llx at frame %u (%s, P%d)\n", (unsigned long long)hash, frames,
+           join ? "guest" : "host", vsnet_slot(n) + 1);
+    if (log) fclose(log);
+    vsnet_close(n);
+    return ok;
+}
+
 /* the patched ROM as a file MAME can run; MAME mirrors the file, so a patched upper half is lost */
 static int bake_rom(const uint16_t *rom, const char *path)
 {
@@ -259,6 +358,9 @@ int main(int argc, char **argv)
     FILE *watch_out = NULL;
     unsigned watch_from = 0, watch_to = ~0u;
     unsigned state_save_at = 0;
+    int versus_menu = 0, net_players = 2, vs_stage = 0;
+    int versus = 0, vs_players = 4, vs_stocks = 3, vs_bots_set = 0, vs_select = 0;
+    uint32_t vs_bots = 0, vs_seed = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--frames") && i + 1 < argc) frames = (unsigned)atoi(argv[++i]);
@@ -275,6 +377,22 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--state-load") && i + 1 < argc) state_load = argv[++i];
         else if (!strcmp(argv[i], "--mods") && i + 1 < argc) mod_list = argv[++i];
         else if (!strcmp(argv[i], "--coop")) coop = 1;
+        else if (!strcmp(argv[i], "--versus")) versus = 1;
+        else if (!strcmp(argv[i], "--select")) vs_select = 1;
+        else if (!strcmp(argv[i], "--versus-menu")) versus_menu = 1;
+        else if (!strcmp(argv[i], "--net-players") && i + 1 < argc) net_players = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--stage") && i + 1 < argc) vs_stage = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--players") && i + 1 < argc) vs_players = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--stocks") && i + 1 < argc) vs_stocks = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--seed") && i + 1 < argc) vs_seed = (uint32_t)strtoul(argv[++i], NULL, 0);
+        else if (!strcmp(argv[i], "--bots") && i + 1 < argc) {
+            const char *a = argv[++i];
+            vs_bots_set = 1;
+            if (!strcmp(a, "all")) vs_bots = 0xFF;
+            else if (strcmp(a, "none"))
+                for (const char *p = a; *p; p++)
+                    if (*p >= '1' && *p <= '8') vs_bots |= 1u << (*p - '1');
+        }
         else if (!strcmp(argv[i], "--hash")) print_hash = 1;
         else if (!strcmp(argv[i], "--host") && i + 1 < argc) host_port = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--join") && i + 1 < argc) join = argv[++i];
@@ -318,8 +436,30 @@ int main(int argc, char **argv)
 
     static spg_t m;
     spg_init(&m, rom);
+    if (versus) {
+        if (!vs_bots_set) {   /* the players the script doesn't drive */
+            int cols = 0;
+            for (int k = 0; k < n_inputs; k++)
+                for (int p = 0; p < VS_MAX; p++)
+                    if (inputs[k].mask[p] && p + 1 > cols) cols = p + 1;
+            vs_bots = 0xFFu & ~((1u << cols) - 1);
+        }
+        spg_reset(&m);
+        if (host_port || join) {   /* online: the host's slot 0 is a human, the rest CPUs until guests come */
+            static versus_t v;
+            uint8_t id[32];
+            mods_content_id(rom, id);
+            versus_init(&v, rom, vs_players, 0xFE, vs_stocks, vs_seed, vs_select);
+            if (vs_stage) versus_set_stage(&v, vs_stage);
+            return run_versus_net(&v, rom, id, host_port, join, &net_o, frames, fps > 0 ? fps : 60, net_players,
+                                  net_log) ? 0 : 1;
+        }
+        return run_versus(&m, frames, vs_players, vs_bots, vs_stocks, vs_seed, vs_select, vs_stage, print_hash,
+                          state_save, state_save_at, state_load) ? 0 : 1;
+    }
     if (host_port || join) coop = 1;
     if (coop) coop_attach(&m);
+    if (versus_menu) vsmenu_attach(&m);
     mods_attach(&m);
     if (romcov) {
         m.romcov = calloc(ROM_SPACE_WORDS, 1);
@@ -352,6 +492,7 @@ int main(int argc, char **argv)
 
     uint8_t rom_hash[32];
     mods_content_id(rom, rom_hash);
+    if (versus_menu) vsmenu_patch(rom);
     spg_reset(&m);
     mods_reset(&m);
     if (state_load) {
@@ -370,6 +511,10 @@ int main(int argc, char **argv)
         if (watch_out) m.watch = m.frame + 1 >= watch_from && m.frame + 1 <= watch_to ? watch_out : NULL;
         if (!spg_run_frame(&m, trace, &trace_instr)) { ok = 0; break; }
         mods_frame(&m);
+        if (m.versus_request) {
+            fprintf(stderr, "versus requested at vblank %u\n", m.frame);
+            m.versus_request = 0;
+        }
         snap_frame(&m);
     }
     if (state_save && m.frame == state_save_at && !spg_state_save(&m, rom_hash, state_save)) return 1;

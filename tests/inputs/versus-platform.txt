@@ -1,0 +1,9 @@
+# versus (batman-rt --versus --players 2 --bots none): P1 jumps, double-jumps up through the
+# catwalk and lands on it, then drops back through it with Down. The countdown ends at 150.
+# frame P1 P2 (masks: 8000 up 4000 down 2000 left 1000 right 0800 jump 0200 attack)
+160 0800 0000
+161 0000 0000
+176 0800 0000
+177 0000 0000
+300 4000 0000
+301 0000 0000

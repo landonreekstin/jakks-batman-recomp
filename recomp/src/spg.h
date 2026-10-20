@@ -79,6 +79,7 @@ typedef struct spg {
     int (*pc_hook)(struct spg *m, uint32_t pc);
 
     coop_t coop;            /* two-player state (coop.c); plain data, so save states keep it */
+    int versus_request;     /* the title menu's Versus was picked (vsmenu.c); the front end clears it */
 } spg_t;
 
 int spg_init(spg_t *m, const uint16_t *rom);

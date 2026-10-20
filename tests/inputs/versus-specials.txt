@@ -1,0 +1,10 @@
+# versus (batman-rt --versus --players 2 --bots none): Batman's specials against a standing Joker
+# 112 px away. X throws the Batarang (4 %), Right + X glides into him with a kick (8 %, 12 in
+# all), Up + X (the recovery) rises from the floor onto the catwalk.
+# frame P1 P2 (masks: 8000 up 1000 right 0100 special)
+160 0100 0000
+161 0000 0000
+230 1100 0000
+231 0000 0000
+300 8100 0000
+301 0000 0000

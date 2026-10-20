@@ -67,6 +67,14 @@ PPU/SPU work.
   VPN (about 90 ms ping): it found a freeze at a locked door and doors P1 couldn't use, both fixed
   (`notes/coop.md`). Next: P1
   respawning in place while P2 lives, and the driving levels (plan in `notes/coop.md`).
+- **Versus mode, proof of concept** (`recomp/src/versus.c`, `notes/versus.md`): a Smash-style
+  fighting mode in native code, using the game's art (sprite frames with their hit and hurt boxes,
+  palettes, scene 8's tilemaps) through the PPU port. Up to 8 fighters (Batman, Joker, Bane,
+  Firefly), damage percent, knockback, stocks, a pass-through catwalk, blast zones, CPU players, and a
+  character select. The roster also has the Penguin, Mr. Freeze and Robin (with `--mods robin-p2`).
+  Deterministic, with save/load (`tests/versus.sh`). The roadmap (menus, netplay, ledges and the
+  grapnel, block, A/B+direction moves, full knockback) is in `notes/versus.md`. Characters are in
+  `notes/characters.md`: the "Harley" frame list was the Joker.
 - Not done: static recompiler (code is still interpreted).
 - Game structure is in `notes/game-structure.md`; ROM layout in `notes/rom-layout.md`.
 
@@ -84,6 +92,8 @@ PPU/SPU work.
   compared with MAME when `<workdir>/mame` holds a capture with the same input.
 - `tests/net.sh <workdir> [start] [frames] [lat,jitter,loss%]`: netplay over loopback, in real time
   (see Status).
+- `tests/versus.sh [workdir]`: versus mode determinism, platforms, combo, stocks, select, the title item.
+- `tests/vsnet.sh <workdir> [frames] [lat,jitter,loss%]`: versus netplay, a host and two guests on loopback.
 - `tools/mame/capture.lua` makes the MAME reference. `tests/compare.py` does the diffs.
 - `tools/ghidra/SeedAndExport.java`: headless Ghidra pass, exports the function list.
 
@@ -107,6 +117,23 @@ keyboard). Add `--mods robin-p2` to make P2 Robin. P2 is a second copy of the pl
 RAM around a second run of the player update. It also takes part in the enemies' targeting, the collision
 pass and the HUD (at the bottom of the screen), and has its own lives and respawn. The camera follows the
 midpoint, with a leash. Native only. Input scripts take an optional second mask for P2.
+
+**Versus** (`--versus`, `notes/versus.md`): `batman target/batman.bin --versus [--players 2-8] [--stocks N]
+[--kb2] [--quick]`. It opens on the character select (Left/Right pick, B ready, X back, P1's Up/Down add or remove
+CPUs; `--quick` skips it). The story game's title menu also has it: a third item, **Versus**, under New Game and
+Continue (`recomp/src/vsmenu.c`; Special on the select screen goes back to the title; off in recordings and online,
+and with `--no-versus-menu`). Paused, Special leaves a match for the select screen. P1 plays on the keyboard (arrows, Z = jump, X = attack, C = special, V = block, Enter = pause) and the
+first controller. `--kb2` adds P2 on W A S D, J, K, L, Left Shift, P. Every other controller takes the next CPU
+slot, also when plugged in during a match. On a controller: south = attack, east = special, west/north = jump,
+shoulders/triggers = block, and Up also jumps. Down drops through the catwalk, or fast-falls in the air.
+Online versus (`recomp/src/vsnet.c`, up to 8 machines, rollback): `--versus --host [port]` and `--versus --join
+<addr>[:port]`; guests take CPU slots, at any time. F5/F8 save/load a match (`<save>.vs<slot>`) and Backspace
+rewinds it, offline only. Block (trigger, shoulder or V): a shield with health and breaks, rolls and spot dodges
+from it, air dodges. Moves on Smash's scheme: B and B + direction (tilts, up/down airs), X and X + direction
+(specials: Batarang, the Joker's gun and gas bomb, the Penguin's bombs and chain, Firefly's flames, recoveries).
+Two stages (`--stage`, or P1's block on the select screen): the Catwalk and the Clock Tower (a scrolling camera,
+ledges to hang from, and Batman's grapnel to reach them). `batman-rt --versus` runs matches headless (`--bots`, `--seed`, `--input` with a mask per player, `--snap`,
+`--hash`, `--state-save-at`/`--state-load`).
 
 **Online** (`notes/netplay.md`): the host runs `batman target/batman.bin --mods robin-p2 --host`
 (port 7845, TCP and UDP; `--host 9000` for another) and plays as P1. Player 2 runs

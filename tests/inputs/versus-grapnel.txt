@@ -1,0 +1,11 @@
+# versus --stage 1 (the Clock Tower; batman-rt --versus --stage 1 --players 2 --bots none): P1
+# (Batman) walks left under the long stone platform's left end, then Up + X shoots the grapnel at
+# that ledge: he is pulled up and hangs from it (state 8). Right then climbs up onto the
+# platform (y 320).
+# frame P1 P2 (masks: 8000 up 2000 left 1000 right 0100 special)
+150 2000 0000
+200 0000 0000
+210 8100 0000
+211 0000 0000
+260 1000 0000
+262 0000 0000

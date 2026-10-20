@@ -1,0 +1,13 @@
+# versus (batman-rt --versus --players 2 --bots none): P1 (Batman) holds block from the end of
+# the countdown; P2 (Joker) walks up and smashes the mallet (B + side) into the shield three times. P1 takes
+# no damage; the shield does (7 points left after two hits), and the third breaks it (P1 dizzy,
+# state 7).
+# frame P1 P2 (masks: 2000 left 0200 attack 0080 block; 2200 = Left + B, the side tilt)
+150 0080 2000
+190 0080 0000
+200 0080 2200
+201 0080 0000
+240 0080 2200
+241 0080 0000
+280 0080 2200
+281 0080 0000
