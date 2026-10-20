@@ -71,7 +71,8 @@ PPU/SPU work.
   fighting mode in native code, using the game's art (sprite frames with their hit and hurt boxes,
   palettes, scene 8's tilemaps) through the PPU port. Up to 8 fighters (Batman, Joker, Bane,
   Firefly), damage percent, knockback, stocks, a pass-through catwalk, blast zones, CPU players, and a
-  character select. The roster also has the Penguin, Mr. Freeze and Robin (with `--mods robin-p2`).
+  character select. The roster also has the Penguin, Mr. Freeze, Robin (with `--mods robin-p2`), and v1 stand-ins (other
+  characters' frames in their own colours) for Nightwing, Harley Quinn, Catwoman, Deathstroke and Killer Croc.
   Deterministic, with save/load (`tests/versus.sh`). The roadmap (menus, netplay, ledges and the
   grapnel, block, A/B+direction moves, full knockback) is in `notes/versus.md`. Characters are in
   `notes/characters.md`: the "Harley" frame list was the Joker.

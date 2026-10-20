@@ -29,7 +29,8 @@
  *                                --input script has no column for, or all without one),
  *                                [--stocks N] (3), [--seed N], [--stage N] (0 Catwalk, 1 Clock
  *                                Tower), [--chars 5,1,..] the characters by slot (0 Batman,
- *                                1 Joker, 2 Bane, 3 Firefly, 4 Penguin, 5 Mr. Freeze, 6 Robin),
+ *                                1 Joker, 2 Bane, 3 Firefly, 4 Penguin, 5 Mr. Freeze, 6 Nightwing,
+ *                                7 Harley, 8 Catwoman, 9 Deathstroke, 10 Killer Croc, 11 Robin),
  *                                [--select] open on the
  *                                character select (versus.h). --input lines carry one mask per
  *                                player. --snap/--snap-frames, --hash, --state-save-at and

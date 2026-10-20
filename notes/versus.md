@@ -47,8 +47,18 @@
   | Mr. Freeze | arm thrust (5–11), freeze breath upwards in the air (21–26) | the boxes are given in `versus.c`; slow, heavy (125). His frames have no walk or jump |
   | Robin | Batman's moves on `mods/robin-p2`'s frames (upper ROM copy, bank 0x251C40) | only offered with `--mods robin-p2`; faster and lighter than Batman |
 
-  The roster order is Batman, Joker, Bane, Firefly, Penguin, Mr. Freeze, then Robin when his mod is
-  loaded (`versus_roster`). `versus_set_char` changes a slot's character before the fight.
+  The stand-ins (v1, other characters' frames in their own colours):
+
+  | | frames of | build |
+  |---|---|---|
+  | Nightwing | the staff fighter (0x8699): escrima spin on X, slide on X + side | quick, light (88) |
+  | Harley Quinn | the Joker: mallet, pop gun, gas bomb | lighter and quicker than him (85) |
+  | Catwoman | the kickboxer (0x7426): high kick, sweep, flying kick, a pounce on X + side | the lightest (82) |
+  | Deathstroke | the staff fighter: pistol on X, a lunging thrust on X + side | heavier (105), hits harder |
+  | Killer Croc | Bane | heavy (150), takes 85 % of the damage |
+
+  The roster order is Batman, Joker, Bane, Firefly, Penguin, Mr. Freeze, Nightwing, Harley,
+  Catwoman, Deathstroke, Killer Croc, then Robin when his mod is loaded (`versus_roster`). `versus_set_char` changes a slot's character before the fight.
 
 - **Physics:**
   - walking;
@@ -317,7 +327,12 @@ A match's whole state is its `versus_t`.
      - X + up, if feasible, "draws ice": a short-lived ice platform that hurts the others but
        not him, and that he can jump off to recover.
    - **New characters:** Nightwing, Harley Quinn, Catwoman, Deathstroke, Killer Croc. None is in
-     the ROM, so each needs frames made in the game's style (like `mods/robin`'s generator).
+     the ROM.
+     - v1 is in: each uses another character's frames in 16 colours of its own (`*_COLORS` in
+       `versus.c`), with its own moves and weights. Robin started out the same way, as a
+       palette swap.
+     - Still to do: frames made in the game's style (heads, cowls, ears, Croc's tail; like
+       `mods/robin`'s generator), with your review frame by frame.
    - **Sound and music:** borrowed from the rest of the game (done, see "Sound"; the ids are
      guesses to retune by ear). Still to do: find Bane's real
    fighting frames, and the enemies' own animation tables.

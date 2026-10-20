@@ -45,9 +45,10 @@ Identified by eye from the frame sheets in each one's own palette.
 | 0x57EA | 72 | 0x0D | **Firefly**: hovering 0–9, flamethrower 10–13, standing 14–25, the flame column 27–39, flying 40–51, a kick 52–55, crouch 56–61. |
 | 0x489F | 30 | 0x0A | **Mr. Freeze**: standing, then his freeze breath (21–29). |
 | 0x4D64 | 97 | 0x0B | **the Penguin** (umbrella, chain) |
-| 0x8699 | 206 | 0x1B–0x1F | the staff fighter (`mods/robin`'s source) |
+| 0x8699 | 206 | 0x1B–0x1F | the staff fighter (`mods/robin`'s source): stance 17–24, walk 9–16, flips 32–40, thrusts 69–75, long swing 57–62, sweep 84–88, staff spin 93–107, rising thrust 109–113, hurt 138–139. Frames 140 on are another enemy (a chain, no staff). |
 | 0xD520 | 217 | 0x2E–0x33, 0x19 | thug with fall, lie and get-up frames (`notes/sprites.md`'s 0x05F16C) |
-| 0x5F49, 0x7426, 0xA355 | 153, 153, 159 | 0x0E–, 0x13–, 0x20– | thugs (club, others) |
+| 0x7426 | 153 | 0x13– | a slim kickboxer: punches 57–59, high kick 71–75, flying kick 81–84, sweep 91–94, low kick 106–108, flips 33–40, throws 116–133, hurt 134–141 (Catwoman's stand-in) |
+| 0x5F49, 0xA355 | 153, 159 | 0x0E–, 0x20– | thugs (a pipe, a club) |
 | 0x0060 … 0x2BD6 | | 0, 1 | HUD and effects (the bat icon, "GO", digits, sparks) |
 | 0x2ED4, 0x4640 … 0x487A | 1 each | | vehicles and props of the driving levels |
 | 0xF14E … 0xFA67 | | | small objects and effects |

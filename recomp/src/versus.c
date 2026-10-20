@@ -103,7 +103,37 @@ typedef struct character {
     int16_t tall, reach;     /* for the HUD tag and the bots */
     int16_t armor;           /* percent of a hit's damage it takes (0: all of it) */
     uint32_t bank, palettes; /* 0: the game's sprite bank and palettes; Robin's are in the upper ROM copy */
+    const uint16_t *colors;  /* its own 16 colours instead of the ROM palette (the stand-ins) */
 } character_t;
+
+#define C5(r, g, b) ((uint16_t)((r) << 10 | (g) << 5 | (b)))
+/* v1 stand-ins for characters the game doesn't have: another character's frames in colours of
+ * their own, until frames are drawn for them (notes/versus.md). Colour 0 is transparent. */
+static const uint16_t NIGHTWING_COLORS[16] = {   /* over the staff fighter (palette id 0x1C) */
+    0x8000, C5(10, 11, 16), C5(7, 8, 12), C5(4, 5, 8), C5(2, 2, 4),        /* suit: black */
+    C5(29, 25, 21), C5(26, 19, 14), C5(19, 12, 8), C5(3, 4, 8), C5(1, 1, 3),   /* skin; dark: suit */
+    C5(6, 14, 31), C5(8, 16, 31),                                         /* the blue bird, tips */
+    C5(20, 20, 22), C5(13, 13, 15), C5(7, 7, 9), 0 };                     /* escrima: metal */
+static const uint16_t DEATHSTROKE_COLORS[16] = {   /* over the staff fighter */
+    0x8000, C5(31, 20, 4), C5(26, 14, 2), C5(19, 9, 1), C5(12, 5, 1),     /* orange */
+    C5(12, 13, 18), C5(8, 9, 13), C5(5, 6, 9), C5(3, 3, 5), C5(1, 1, 2),  /* navy armour, mask */
+    C5(31, 31, 31), C5(31, 24, 8),
+    C5(24, 24, 26), C5(16, 16, 18), C5(9, 9, 11), 0 };                    /* the staff: steel */
+static const uint16_t CATWOMAN_COLORS[16] = {   /* over the kickboxer (palette id 0x13) */
+    0x8000, C5(12, 8, 16), C5(8, 5, 12), C5(5, 3, 8), C5(3, 2, 5),        /* catsuit: black-purple */
+    C5(10, 9, 12), C5(7, 6, 9), C5(5, 4, 7), C5(3, 3, 5), C5(2, 1, 3),    /* cowl and hair: black */
+    C5(20, 31, 31),                                                       /* goggles */
+    C5(31, 24, 17), C5(29, 18, 11), C5(22, 14, 6), C5(16, 8, 2), 0 };     /* skin */
+static const uint16_t HARLEY_COLORS[16] = {   /* over the Joker (palette id 0x25) */
+    0x8000, C5(30, 30, 31), C5(31, 14, 14), C5(28, 6, 8), C5(22, 3, 5), C5(12, 1, 3),   /* white face, red suit */
+    C5(9, 9, 10), C5(6, 6, 7), C5(4, 4, 5), C5(2, 2, 3),                  /* black */
+    C5(30, 26, 12), C5(22, 18, 6),                                        /* blonde */
+    C5(4, 4, 3), C5(5, 5, 7), C5(2, 2, 4), 0 };
+static const uint16_t CROC_COLORS[16] = {   /* over Bane (palette id 0x26) */
+    0x8000, C5(31, 31, 31), C5(30, 25, 1), C5(24, 19, 2), C5(18, 12, 2),  /* eyes, teeth */
+    C5(22, 16, 10), C5(18, 12, 7), C5(14, 9, 5), C5(10, 6, 3), C5(7, 4, 2),   /* torn trousers */
+    C5(2, 6, 1), 0, C5(10, 20, 6), C5(5, 13, 3),                          /* scales: green */
+    C5(20, 26, 10), C5(12, 18, 4) };
 
 /* projectiles: frames of a bank entry, cycled, with a box round the position */
 typedef struct proj_def {
@@ -268,6 +298,109 @@ static const character_t CHARS[] = {
       },
       .walk_v = 416, .air_v = 416, .jump_v = 1450, .djump_v = 1150, .gravity = 70, .fall_v = 1500,
       .weight = 125, .air_jumps = 1, .body = { -12, -54, 12, 0 }, .tall = 66, .reach = 32 },
+    /* ---- stand-ins (v1): other characters' frames in colours of their own ---- */
+    /* Nightwing on the staff fighter's frames (its staff as his escrima): quick and acrobatic */
+    { .name = "NIGHTWING", .header = 0x8699, .pal = 0x1C, .colors = NIGHTWING_COLORS,
+      .idle = A(17, 24, 6, 1), .walk = A(9, 16, 4, 1), .jump = A(32, 34, 6, 0), .djump = A(34, 38, 4, 0),
+      .fall = A(39, 40, 8, 1), .hurt = A(138, 139, 6, 0), .tumble = A(139, 139, 6, 0),
+      .mv = {
+          [MV_JAB1] = { .a = A(69, 71, 4, 0), .dmg = 3, .bkb = 120, .chain = MV_JAB2 + 1 },
+          [MV_JAB2] = { .a = A(72, 75, 4, 0), .dmg = 5, .bkb = 400, .kbg = 95, .angle = 40 },
+          [MV_AIR] = { .a = A(34, 38, 4, 0), .box = { -18, -50, 18, -10 }, .act0 = 35, .act1 = 37,
+                       .dmg = 6, .bkb = 400, .kbg = 95, .angle = 45 },
+          [MV_FTILT] = { .a = A(57, 62, 4, 0), .dmg = 8, .bkb = 450, .kbg = 110, .angle = 35 },
+          [MV_UTILT] = { .a = A(109, 113, 4, 0), .dmg = 7, .bkb = 420, .kbg = 105, .angle = 80 },
+          [MV_DTILT] = { .a = A(84, 88, 4, 0), .dmg = 6, .bkb = 300, .kbg = 70, .angle = 20 },
+          [MV_UAIR] = { .a = A(111, 113, 4, 0), .dmg = 6, .bkb = 380, .kbg = 100, .angle = 85 },
+          [MV_DAIR] = { .a = A(86, 87, 5, 0), .dmg = 7, .bkb = 330, .kbg = 100, .angle = -60 },
+          [MV_NSPEC] = { .a = A(93, 107, 3, 0), .dmg = 9, .bkb = 450, .kbg = 100, .angle = 60 },  /* escrima spin */
+          [MV_SSPEC] = { .a = A(85, 88, 4, 0), .dmg = 7, .bkb = 400, .kbg = 95, .angle = 30, .vx0 = 1280 },
+          [MV_USPEC] = { .a = A(34, 38, 4, 0), .box = { -14, -64, 14, -30 }, .act0 = 34, .act1 = 38,
+                         .dmg = 5, .bkb = 400, .kbg = 85, .angle = 80, .vy0 = -2100, .helpless = 1 },
+      },
+      .walk_v = 640, .air_v = 576, .jump_v = 1600, .djump_v = 1350, .gravity = 64, .fall_v = 1400,
+      .weight = 88, .air_jumps = 1, .body = { -8, -46, 8, 0 }, .tall = 52, .reach = 44 },
+    /* Harley Quinn on the Joker's frames (the mallet is hers too): lighter and quicker */
+    { .name = "HARLEY", .header = 0xB682, .pal = 0x25, .colors = HARLEY_COLORS,
+      .idle = A(0, 0, 30, 1), .walk = A(49, 60, 3, 1), .jump = A(4, 4, 8, 0), .djump = A(6, 6, 8, 0),
+      .fall = A(4, 4, 8, 1), .hurt = A(2, 3, 6, 0), .tumble = A(6, 6, 6, 0),
+      .mv = {
+          [MV_JAB1] = { .a = A(62, 64, 3, 0), .box = { 8, -36, 28, -20 }, .act0 = 63, .act1 = 64,
+                        .dmg = 3, .bkb = 200, .kbg = 20, .angle = 20 },
+          [MV_AIR] = { .a = A(4, 6, 4, 0), .dmg = 6, .bkb = 400, .kbg = 90, .angle = 35 },
+          [MV_FTILT] = { .a = A(23, 29, 3, 0), .dmg = 10, .bkb = 520, .kbg = 120, .angle = 40 },
+          [MV_UTILT] = { .a = A(25, 28, 3, 0), .dmg = 7, .bkb = 420, .kbg = 105, .angle = 85 },
+          [MV_DTILT] = { .a = A(28, 31, 4, 0), .dmg = 7, .bkb = 350, .kbg = 85, .angle = 25 },
+          [MV_UAIR] = { .a = A(26, 28, 3, 0), .dmg = 6, .bkb = 380, .kbg = 95, .angle = 80 },
+          [MV_DAIR] = { .a = A(28, 30, 4, 0), .dmg = 8, .bkb = 330, .kbg = 100, .angle = -60 },
+          [MV_NSPEC] = { .a = A(38, 43, 3, 0), .proj = PJ_BULLET, .proj_frame = 40 },   /* a pop gun */
+          [MV_SSPEC] = { .a = A(31, 34, 4, 0), .proj = PJ_GAS, .proj_frame = 33 },
+          [MV_USPEC] = { .a = A(4, 6, 4, 0), .dmg = 5, .bkb = 400, .kbg = 80, .angle = 80, .vy0 = -2050,
+                         .helpless = 1 },
+      },
+      .walk_v = 600, .air_v = 540, .jump_v = 1600, .djump_v = 1350, .gravity = 64, .fall_v = 1400,
+      .weight = 85, .air_jumps = 1, .body = { -8, -42, 10, 0 }, .tall = 50, .reach = 34 },
+    /* Catwoman on the kickboxer's frames (frame list 0x7426): kicks, flips, the lightest */
+    { .name = "CATWOMAN", .header = 0x7426, .pal = 0x13, .colors = CATWOMAN_COLORS,
+      .idle = A(17, 24, 6, 1), .walk = A(25, 31, 4, 1), .jump = A(33, 34, 6, 0), .djump = A(35, 38, 4, 0),
+      .fall = A(37, 38, 6, 1), .hurt = A(134, 135, 6, 0), .tumble = A(137, 137, 6, 0),
+      .mv = {
+          [MV_JAB1] = { .a = A(57, 59, 4, 0), .dmg = 3, .bkb = 150, .chain = MV_JAB2 + 1 },
+          [MV_JAB2] = { .a = A(63, 66, 4, 0), .dmg = 4, .bkb = 350, .kbg = 90, .angle = 40 },
+          [MV_AIR] = { .a = A(81, 84, 4, 0), .dmg = 7, .bkb = 400, .kbg = 95, .angle = 40 },
+          [MV_FTILT] = { .a = A(71, 75, 4, 0), .dmg = 8, .bkb = 440, .kbg = 110, .angle = 45 },  /* high kick */
+          [MV_UTILT] = { .a = A(71, 74, 4, 0), .dmg = 7, .bkb = 400, .kbg = 105, .angle = 80 },
+          [MV_DTILT] = { .a = A(91, 94, 4, 0), .dmg = 6, .bkb = 300, .kbg = 70, .angle = 20 },   /* sweep */
+          [MV_UAIR] = { .a = A(72, 73, 4, 0), .dmg = 6, .bkb = 380, .kbg = 100, .angle = 80 },
+          [MV_DAIR] = { .a = A(106, 108, 5, 0), .dmg = 7, .bkb = 330, .kbg = 100, .angle = -60 },
+          [MV_SSPEC] = { .a = A(81, 84, 4, 0), .dmg = 8, .bkb = 420, .kbg = 100, .angle = 35, .vx0 = 1400,
+                         .lowgrav = 1 },                                                     /* the pounce */
+          [MV_USPEC] = { .a = A(33, 38, 4, 0), .box = { -14, -62, 14, -30 }, .act0 = 34, .act1 = 38,
+                         .dmg = 5, .bkb = 400, .kbg = 85, .angle = 80, .vy0 = -2200, .helpless = 1 },
+      },
+      .walk_v = 640, .air_v = 600, .jump_v = 1650, .djump_v = 1400, .gravity = 62, .fall_v = 1350,
+      .weight = 82, .air_jumps = 1, .body = { -8, -44, 8, 0 }, .tall = 50, .reach = 34 },
+    /* Deathstroke on the staff fighter's frames: heavier and harder, with a gun */
+    { .name = "DEATHSTROKE", .header = 0x8699, .pal = 0x1C, .colors = DEATHSTROKE_COLORS,
+      .idle = A(17, 24, 6, 1), .walk = A(9, 16, 5, 1), .jump = A(32, 34, 6, 0), .djump = A(34, 38, 4, 0),
+      .fall = A(39, 40, 8, 1), .hurt = A(138, 139, 6, 0), .tumble = A(139, 139, 6, 0),
+      .mv = {
+          [MV_JAB1] = { .a = A(69, 71, 4, 0), .dmg = 4, .bkb = 150, .chain = MV_JAB2 + 1 },
+          [MV_JAB2] = { .a = A(72, 75, 5, 0), .dmg = 6, .bkb = 450, .kbg = 100, .angle = 40 },
+          [MV_AIR] = { .a = A(34, 38, 5, 0), .box = { -18, -50, 18, -10 }, .act0 = 35, .act1 = 37,
+                       .dmg = 7, .bkb = 420, .kbg = 100, .angle = 45 },
+          [MV_FTILT] = { .a = A(57, 62, 5, 0), .dmg = 10, .bkb = 480, .kbg = 115, .angle = 35 },
+          [MV_UTILT] = { .a = A(109, 113, 5, 0), .dmg = 8, .bkb = 440, .kbg = 110, .angle = 80 },
+          [MV_DTILT] = { .a = A(84, 88, 5, 0), .dmg = 7, .bkb = 320, .kbg = 75, .angle = 20 },
+          [MV_UAIR] = { .a = A(111, 113, 5, 0), .dmg = 7, .bkb = 400, .kbg = 105, .angle = 85 },
+          [MV_DAIR] = { .a = A(86, 87, 5, 0), .dmg = 8, .bkb = 340, .kbg = 105, .angle = -60 },
+          [MV_NSPEC] = { .a = A(69, 72, 5, 0), .proj = PJ_BULLET, .proj_frame = 71 },          /* his pistol */
+          [MV_SSPEC] = { .a = A(42, 48, 4, 0), .box = { 20, -40, 62, -28 }, .act0 = 43, .act1 = 48,
+                         .dmg = 10, .bkb = 480, .kbg = 110, .angle = 30, .vx0 = 1152 },        /* a lunging thrust */
+          [MV_USPEC] = { .a = A(34, 38, 4, 0), .box = { -14, -64, 14, -30 }, .act0 = 34, .act1 = 38,
+                         .dmg = 6, .bkb = 420, .kbg = 85, .angle = 80, .vy0 = -2000, .helpless = 1 },
+      },
+      .walk_v = 544, .air_v = 512, .jump_v = 1520, .djump_v = 1250, .gravity = 66, .fall_v = 1450,
+      .weight = 105, .air_jumps = 1, .body = { -8, -46, 8, 0 }, .tall = 52, .reach = 44 },
+    /* Killer Croc on Bane's frames: almost as heavy, a little quicker */
+    { .name = "KILLER CROC", .header = 0xBFB5, .pal = 0x26, .strip_lo = 0x10E2, .strip_hi = 0x10EC,
+      .colors = CROC_COLORS,
+      .idle = A(0, 20, 4, 1), .walk = A(0, 20, 3, 1), .jump = A(0, 0, 8, 0), .djump = A(0, 0, 8, 0),
+      .fall = A(0, 0, 8, 1), .hurt = A(29, 30, 4, 0), .tumble = A(26, 26, 4, 0),
+      .mv = {
+          [MV_JAB1] = { .a = A(31, 34, 6, 0), .box = { 16, -64, 60, -16 }, .act0 = 33, .act1 = 34,
+                        .dmg = 12, .bkb = 600, .kbg = 120, .angle = 40, .lunge = 448 },
+          [MV_AIR] = { .a = A(31, 34, 6, 0), .box = { 16, -64, 60, -16 }, .act0 = 33, .act1 = 34,
+                       .dmg = 11, .bkb = 520, .kbg = 110, .angle = 50 },
+          [MV_SSPEC] = { .a = A(31, 34, 6, 0), .box = { 10, -70, 64, -4 }, .act0 = 32, .act1 = 34,
+                         .dmg = 13, .bkb = 650, .kbg = 120, .angle = 35, .vx0 = 1280 },        /* a lunge */
+          [MV_USPEC] = { .a = A(31, 34, 6, 0), .box = { -20, -100, 34, -40 }, .act0 = 31, .act1 = 34,
+                         .dmg = 12, .bkb = 560, .kbg = 120, .angle = 85, .vy0 = -2200, .helpless = 1 },
+          [MV_DSPEC] = { .a = A(31, 34, 6, 0), .box = { -34, -24, 40, 4 }, .act0 = 31, .act1 = 34,
+                         .dmg = 12, .bkb = 530, .kbg = 110, .angle = 60, .vy0 = 1800 },
+      },
+      .walk_v = 384, .air_v = 352, .jump_v = 1450, .djump_v = 1000, .gravity = 74, .fall_v = 1700,
+      .weight = 150, .armor = 85, .air_jumps = 1, .body = { -24, -70, 30, 0 }, .tall = 82, .reach = 56 },
     /* mods/robin-p2's Robin: Batman's frame slots, rebuilt from the staff fighter's, in the
      * upper ROM copy (notes/sprites.md). Only offered when that mod is loaded. Its frames 139 on
      * are still Batman's, so no glide: the flying kick dashes instead. */
@@ -293,7 +426,7 @@ static const character_t CHARS[] = {
       .walk_v = 640, .air_v = 576, .jump_v = 1560, .djump_v = 1300, .gravity = 64, .fall_v = 1408,
       .weight = 90, .air_jumps = 1, .body = { -8, -44, 8, 0 }, .tall = 46, .reach = 40 },
 };
-enum { CH_ROBIN = 6 };
+enum { CH_ROBIN = 11 };   /* the last: only with mods/robin-p2 */
 #define NCHARS ((int)(sizeof(CHARS) / sizeof(CHARS[0])))
 
 /* ---- stages ----
@@ -1561,7 +1694,7 @@ static int draw_fighter(spg_t *m, const vs_fighter_t *f, int slot, int n, uint32
     n = draw_frame(m, frame_rec(rom, c, f->frame), f->x / SUB - cx, f->y / SUB - cy, f->facing, attr, c->strip_lo,
                    c->strip_hi, n);
     for (int i = 0; i < 16; i++) {
-        uint16_t col = rom[(c->palettes ? c->palettes : PALETTES) + 16 * c->pal + i];
+        uint16_t col = c->colors ? c->colors[i] : rom[(c->palettes ? c->palettes : PALETTES) + 16 * c->pal + i];
         if (i && f->state == ST_SHIELD)   /* the shield: blue-white, red when it is about to break */
             col = f->shield < SHIELD_MAX / 3 ? tint(col, 31, 10, 8, 8) : tint(col, 20, 26, 31, 9);
         else if (i && f->state == ST_DIZZY && (frame >> 3 & 1)) col = tint(col, 31, 31, 8, 8);
@@ -1661,7 +1794,7 @@ void versus_present(const versus_t *v, spg_t *m)
     for (int i = 0; i < v->n; i++) {
         const vs_fighter_t *f = &v->f[i];
         const int cw = 320 / cols, x = (i % cols) * cw + 4, y = 2 + (i / cols) * 22;
-        snprintf(s, sizeof(s), "P%d %s", i + 1, CHARS[f->ch].name);
+        snprintf(s, sizeof(s), "%d %s", i + 1, CHARS[f->ch].name);
         osd_text(m->framebuffer, PPU_W, PPU_H, x, y, 1, s);
         if (v->phase == VS_SELECT) {
             snprintf(s, sizeof(s), "%s", f->bot ? "CPU" : f->ready ? "READY" : "< PICK >");
