@@ -132,7 +132,8 @@ rewinds it, offline only. Block (trigger, shoulder or V): a shield with health a
 from it, air dodges. Moves on Smash's scheme: B and B + direction (tilts, up/down airs), X and X + direction
 (specials: Batarang, the Joker's gun and gas bomb, the Penguin's bombs and chain, Firefly's flames, recoveries).
 Two stages (`--stage`, or P1's block on the select screen): the Catwalk and the Clock Tower (a scrolling camera,
-ledges to hang from, and Batman's grapnel to reach them). `batman-rt --versus` runs matches headless (`--bots`, `--seed`, `--input` with a mask per player, `--snap`,
+ledges to hang from, and Batman's grapnel to reach them). Sound and music come from the game's own driver, with
+the game kept running at its title menu in the background (`recomp/src/vssound.c`; the effect ids are guesses). `batman-rt --versus` runs matches headless (`--bots`, `--seed`, `--input` with a mask per player, `--snap`,
 `--hash`, `--state-save-at`/`--state-load`).
 
 **Online** (`notes/netplay.md`): the host runs `batman target/batman.bin --mods robin-p2 --host`

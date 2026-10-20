@@ -344,6 +344,11 @@ static const int16_t SIN5[19] = { 0, 22, 44, 66, 88, 108, 128, 147, 165, 181, 19
 static int isin(int deg) { return deg < 0 ? -SIN5[(deg < -90 ? 90 : -deg) / 5] : SIN5[(deg > 90 ? 90 : deg) / 5]; }
 static int icos(int deg) { return isin(90 - (deg < 0 ? -deg : deg)); }
 
+static void snd(versus_t *v, int id)
+{
+    if (v->snd_n < VS_SND) v->snd[v->snd_n++] = id;
+}
+
 static uint32_t rnd(versus_t *v)
 {
     uint32_t x = v->rng;
@@ -653,6 +658,7 @@ static void ko(versus_t *v, int i)
     f->t = 0;
     f->helpless = f->squat = 0;
     f->state = --f->stocks > 0 ? ST_RESPAWN : ST_OUT;
+    snd(v, VS_SND_KO);
 }
 
 static void start_dodge(vs_fighter_t *f, const character_t *c, int kind, int dir)
@@ -940,6 +946,7 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
         if (f->squat > 0) {   /* jumpsquat: an attack now is an up tilt or special, else the jump goes */
             if (pressed & (VS_ATTACK | VS_SPECIAL)) f->squat = 0;
             else if (--f->squat == 0 && f->grounded) {
+                snd(v, VS_SND_JUMP);
                 f->vy = -c->jump_v;
                 f->grounded = 0;
                 f->jumps = c->air_jumps;
@@ -950,6 +957,7 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
                 f->squat = JUMPSQUAT;
                 f->vx = 0;
             } else if (f->jumps > 0) {
+                snd(v, VS_SND_JUMP);
                 f->vy = -c->djump_v;
                 f->jumps--;
                 if (dir) f->facing = dir;
@@ -970,7 +978,11 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
             const int mv = pick_move(f, c, b, (pressed & VS_SPECIAL) != 0);
             if (mv >= 0) {
                 if (dir) f->facing = dir;
-                if (!(c->mv[mv].grapple && try_grapple(v, i))) start_move(f, c, mv);
+                if (c->mv[mv].grapple && try_grapple(v, i)) snd(v, VS_SND_GRAPNEL);
+                else {
+                    start_move(f, c, mv);
+                    if (c->mv[mv].dmg) snd(v, VS_SND_SWING);
+                }
             }
         }
     } else if (f->state == ST_ATTACK) {
@@ -987,6 +999,7 @@ static void physics(versus_t *v, int i, uint16_t b, uint16_t pressed)
         if (m->vx0) f->vx = m->vx0 * f->facing;   /* a dash keeps its speed */
         if (m->proj && !f->spawned && f->frame == m->proj_frame) {
             spawn_proj(v, i, m->proj);
+            snd(v, VS_SND_THROW);
             f->spawned = 1;
         }
         if (m->ice && !f->spawned && f->vy >= 0) {   /* the top of the hop: ice under his feet */
@@ -1099,6 +1112,7 @@ static int land_hit(versus_t *v, int i, int j, int dmg, int bkb, int kbg, int an
     vs_fighter_t *t = &v->f[j];
     const character_t *ct = &CHARS[t->ch];
     if (t->state == ST_SHIELD) {   /* blocked: shield damage, a short stun, pushed back */
+        snd(v, VS_SND_BLOCK);
         t->shield -= dmg * SUB * 3 / 2;
         t->shield_stun = 4 + dmg / 2;
         t->vx = facing * (128 + dmg * 48);
@@ -1106,6 +1120,7 @@ static int land_hit(versus_t *v, int i, int j, int dmg, int bkb, int kbg, int an
         if (t->shield <= 0) shield_break(t, ct);
         return t->hitlag;
     }
+    snd(v, dmg >= 9 ? VS_SND_HIT_HEAVY : VS_SND_HIT);
     t->damage += ct->armor ? dmg * ct->armor / 100 : dmg;
     if (t->damage > 999) t->damage = 999;
     const int s = bkb + KB_GROWTH * kbg * t->damage / ct->weight;
@@ -1245,6 +1260,7 @@ void versus_rematch(versus_t *v, const uint16_t *rom, int select)
     v->matches = matches;
     v->select = keep_select;
     for (int i = 0; i < v->n; i++) v->f[i].prev = 0xFFFF;   /* no press carries over */
+    if (select) snd(v, VS_MUSIC_SELECT);
 }
 
 static void add_fighter(versus_t *v, const uint16_t *rom)
@@ -1340,8 +1356,9 @@ static void select_step(versus_t *v, const uint16_t *rom, const uint16_t *b)
                 int k = 0;
                 while (k < nr && roster[k] != f->ch) k++;
                 versus_set_char(v, i, roster[((k + d) % nr + nr) % nr]);
+                snd(v, VS_SND_CURSOR);
             }
-            if (pressed & (VS_ATTACK | VS_JUMP)) f->ready = 1;
+            if (pressed & (VS_ATTACK | VS_JUMP)) { f->ready = 1; snd(v, VS_SND_CHOOSE); }
             else if (pressed & VS_SPECIAL) v->quit = 1;   /* back out of the select screen */
             if (i == 0 && (pressed & VS_UP) && v->n < VS_MAX) add_fighter(v, rom);   /* one more CPU */
             if (i == 0 && (pressed & VS_BLOCK)) versus_set_stage(v, v->stage + 1);    /* the next stage */
@@ -1376,6 +1393,7 @@ void versus_step(versus_t *v, const uint16_t *rom, const uint16_t *buttons)
     }
     v->frame++;
     v->phase_t++;
+    v->snd_n = 0;
     if (v->phase == VS_SELECT) {
         select_step(v, rom, b);
         return;
@@ -1399,6 +1417,8 @@ void versus_step(versus_t *v, const uint16_t *rom, const uint16_t *buttons)
     if (frozen && v->phase_t >= COUNTDOWN) {
         v->phase = VS_FIGHT;
         v->phase_t = 0;
+        snd(v, VS_SND_CHOOSE);
+        snd(v, VS_MUSIC_FIGHT);
     }
 
     for (int i = 0; i < v->n; i++) {
@@ -1433,6 +1453,7 @@ void versus_step(versus_t *v, const uint16_t *rom, const uint16_t *buttons)
             v->phase = VS_GAME_OVER;
             v->phase_t = 0;
             v->matches++;
+            snd(v, VS_MUSIC_END);
             v->winner = left ? who : -1;
         }
     }

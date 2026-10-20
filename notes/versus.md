@@ -222,6 +222,32 @@ Block is a trigger or shoulder on a controller, V on the keyboard (Left Shift fo
 - **Checks:** `tests/inputs/versus-block.txt` (the mallet on a shield: 0 %, 7 points left
   after two hits, and the third breaks it) and `versus-roll.txt`.
 
+## Sound (`recomp/src/vssound.c`)
+
+The game's own sound driver plays everything.
+- **The game in the background.** In versus the machine keeps running the game at its title
+  menu with no buttons. A plain `--versus` boots it there first, quietly. The title menu stays
+  as it is for at least 20,000 frames (no attract mode), and its stack doesn't change.
+- **Versus draws into a second, video-only machine,** so the game's own video registers (its
+  vblank IRQ) are untouched.
+- **Playing a sound** calls the game's play function `0x00ECB7(id)` from its vblank wait loop
+  (0x005CE1).
+  - It returns through a trampoline in the upper ROM copy that drops the argument and puts
+    r1–r4 back.
+  - The id indexes a table at RAM 0x2544/0x2545, with 0x69 entries, the same at the title and in
+    Street Party. Bits 0–1 of 0x209E switch sounds and music on.
+- **Music.** 0x61 is the title's and 0x62 Street Party's. After 0x62 the background game plays
+  the samples the real Street Party plays: 359 shared playback addresses, against 42 for the
+  title music.
+- **Events.** `versus_step` lists the frame's sounds (`v->snd`), and the front end plays those
+  of frames it hasn't played, so rollbacks and rewinds don't repeat them.
+- **The effect ids** (`VS_SND_*` in `versus.h`) are guesses. They come from counting which ids
+  the game plays right after A presses (0x05: jump) and B presses (0x02/0x03 swings;
+  0x0C/0x0F/0x23/0x1C hits) in session1, plus the title menu's 0x3F/0x40/0x07. They need a
+  listen and retuning: KO (0x41), throw (0x24), grapnel (0x25) and the end jingle (0x5E) are
+  the least sure.
+- **Not yet:** sound in `batman-rt` (`--wav` doesn't cover versus), and per-character voices.
+
 ## Save states and rewind
 
 A match's whole state is its `versus_t`.
@@ -292,7 +318,8 @@ A match's whole state is its `versus_t`.
        not him, and that he can jump off to recover.
    - **New characters:** Nightwing, Harley Quinn, Catwoman, Deathstroke, Killer Croc. None is in
      the ROM, so each needs frames made in the game's style (like `mods/robin`'s generator).
-   - **Sound and music:** borrowed from the rest of the game. Still to do: find Bane's real
+   - **Sound and music:** borrowed from the rest of the game (done, see "Sound"; the ids are
+     guesses to retune by ear). Still to do: find Bane's real
    fighting frames, and the enemies' own animation tables.
    - **Costumes** instead of palette swaps: slightly redrawn sprites of a character's other forms
      from other media, such as a Batman Beyond suit for Batman.

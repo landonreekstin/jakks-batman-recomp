@@ -21,6 +21,16 @@ enum {
 
 enum { VS_COUNTDOWN, VS_FIGHT, VS_GAME_OVER, VS_SELECT };
 
+/* sounds: ids of the game's own play-sound function (vssound.h). Picked from what the game plays
+ * around the same events in a recorded session (notes/versus.md); retune by ear here. */
+enum {
+    VS_SND_JUMP = 0x05, VS_SND_SWING = 0x02, VS_SND_HIT = 0x0C, VS_SND_HIT_HEAVY = 0x23,
+    VS_SND_SHOT_HIT = 0x0F, VS_SND_BLOCK = 0x1C, VS_SND_THROW = 0x24, VS_SND_GRAPNEL = 0x25,
+    VS_SND_KO = 0x41, VS_SND_CURSOR = 0x3F, VS_SND_CHOOSE = 0x40, VS_SND_NO = 0x07,
+    VS_MUSIC_SELECT = 0x61, VS_MUSIC_FIGHT = 0x62, VS_MUSIC_END = 0x5E,
+};
+#define VS_SND 8
+
 typedef struct vs_fighter {
     int32_t ch;              /* character (versus.c), -1: empty slot */
     int32_t bot;
@@ -94,6 +104,8 @@ typedef struct versus {
     vs_ice_t ice[VS_ICE];
     int32_t stage;
     int32_t cam_x, cam_y;    /* the camera's top left, 1/256 px of the stage's map */
+    int32_t snd[VS_SND];     /* the sounds the last versus_step made (VS_SND_*) */
+    int32_t snd_n;
 } versus_t;
 
 /* a new match: n fighters (characters assigned in turn from the roster), bot_mask bit i = slot i

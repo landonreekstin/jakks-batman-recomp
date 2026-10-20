@@ -64,6 +64,7 @@
 #include "versus.h"
 #include "vsmenu.h"
 #include "vsnet.h"
+#include "vssound.h"
 
 #define OUT_SCALE 4   /* filter output is 1280x960; SDL scales that to the window */
 #define FF_FRAMES 4   /* emulated frames per displayed frame while fast-forwarding */
@@ -259,6 +260,19 @@ static void net_run(void *ctx, spg_t *m, int render, int audio)
     m->render = 1;
 }
 
+/* versus: a frame of the game in the background (its sound driver), with the new frame's sounds */
+static void vs_audio(spg_t *m, const versus_t *v, uint32_t *played)
+{
+    if (v->frame > *played) {
+        for (int k = 0; k < v->snd_n; k++) vssound_play((uint16_t)v->snd[k]);
+        *played = v->frame;
+    }
+    m->buttons = 0;
+    m->coop.buttons2 = 0;
+    spg_run_frame(m, NULL, NULL);
+    audio_flush();
+}
+
 /* the next free <base>-NNNN.png */
 static int screenshot(const char *base, const uint32_t *px, int w, int h, char *path, size_t pathlen)
 {
@@ -368,6 +382,7 @@ int main(int argc, char **argv)
     /* Versus on the title menu: not in recordings (MAME has no such item) or online */
     if (record_path || host_port || join) vs_menu = 0;
     if (vs_menu) vsmenu_attach(&m);
+    if (vs_menu || versus) vssound_attach(&m);   /* the versus mode's sound, through the game's driver */
     mods_attach(&m);
     FILE *sf = rec ? NULL : fopen(save_path, "rb");
     if (sf) {
@@ -445,6 +460,10 @@ int main(int argc, char **argv)
     static versus_t vs;
     SDL_GameController *vpads[VS_MAX] = {NULL};
     int vs_paused = 0, vs_start = versus, vs_from_title = 0;
+    uint32_t vs_snd_frame = 0;   /* the last versus frame whose sounds were played */
+    static spg_t vsv;            /* versus draws here: m keeps running the game, for the sound */
+    spg_init(&vsv, rom);
+    spg_reset(&vsv);
     static spg_snap_t title_snap;   /* the game at its title menu, while a versus match runs */
     /* versus rewind: every frame, VS_REWIND deep (60 s) */
     enum { VS_REWIND = 3600 };
@@ -478,6 +497,11 @@ int main(int argc, char **argv)
             for (int i = 1; i < vs_players; i++)
                 if (!vpads[i] && !(i == 1 && vs_kb2)) bots |= 1u << i;
             if (vs_online) bots = 0xFE;   /* guests take CPU slots as they join */
+            if (!vs_from_title) {   /* the game in the background, at its title menu, plays the sound */
+                vssound_boot(&m);
+                vssound_play(VS_MUSIC_SELECT);
+            }
+            vs_snd_frame = 0;
             versus_init(&vs, m.rom, vs_players, bots, vs_stocks, vs_online ? 1 : (uint32_t)SDL_GetPerformanceCounter(),
                         vs_from_title || !vs_quick);
             if (vs_stage) versus_set_stage(&vs, vs_stage);
@@ -644,18 +668,18 @@ int main(int argc, char **argv)
                     vnet_retry = 60;
                 }
             }
-            versus_present(&vs, &m);
-            m.frame = vs.frame;
+            vs_audio(&m, &vs, &vs_snd_frame);
+            versus_present(&vs, &vsv);
             if (vnet && (host_port || vnet_on)) {
                 char line[200];
                 snprintf(line, sizeof(line), "%s  (you: P%d)", vsnet_status(vnet), vsnet_slot(vnet) + 1);
-                osd_text(m.framebuffer, PPU_W, PPU_H, 4, PPU_H - 12, 1, line);
+                osd_text(vsv.framebuffer, PPU_W, PPU_H, 4, PPU_H - 12, 1, line);
             } else if (join) {
                 char line[320];
                 if (vnet_over) snprintf(line, sizeof(line), "Can't join %s", join_addr);
                 else snprintf(line, sizeof(line), "Waiting for the match at %s...", join_addr);
-                osd_text(m.framebuffer, PPU_W, PPU_H, 8, 100, 1, line);
-                if (vnet_wait[0]) osd_text(m.framebuffer, PPU_W, PPU_H, 8, 114, 1, vnet_wait);
+                osd_text(vsv.framebuffer, PPU_W, PPU_H, 8, 100, 1, line);
+                if (vnet_wait[0]) osd_text(vsv.framebuffer, PPU_W, PPU_H, 8, 114, 1, vnet_wait);
             }
         } else if (versus) {
             uint16_t b[VS_MAX] = {0};
@@ -700,12 +724,12 @@ int main(int argc, char **argv)
                 }
             }
             if (versus) {
-                versus_present(&vs, &m);
+                if (!vs_paused) vs_audio(&m, &vs, &vs_snd_frame);
+                versus_present(&vs, &vsv);
                 if (vs_paused) {
-                    osd_text(m.framebuffer, PPU_W, PPU_H, 112, 96, 3, "PAUSE");
-                    osd_text(m.framebuffer, PPU_W, PPU_H, 84, 128, 1, "MENU: GO ON   SPECIAL: QUIT");
+                    osd_text(vsv.framebuffer, PPU_W, PPU_H, 112, 96, 3, "PAUSE");
+                    osd_text(vsv.framebuffer, PPU_W, PPU_H, 84, 128, 1, "MENU: GO ON   SPECIAL: QUIT");
                 }
-                if (!vs_from_title) m.frame = vs.frame;
             }
         } else if (join || (net && net_on)) {
             /* netplay drives the frames (above), or the guest waits or has stopped */
@@ -754,7 +778,7 @@ int main(int argc, char **argv)
             if (!running) break;
         }
 
-        crt_apply(crt, filter, m.framebuffer, outbuf);
+        crt_apply(crt, filter, versus ? vsv.framebuffer : m.framebuffer, outbuf);
         if (shot) {
             char path[1100];
             if (screenshot(base, outbuf, ow, oh, path, sizeof(path))) {
