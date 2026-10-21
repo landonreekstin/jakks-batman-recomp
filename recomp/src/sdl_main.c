@@ -1,7 +1,11 @@
 /* SDL2 front end: play The Batman natively.
  *
  *   batman <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N]
- *                       [--record script.txt] [--mods a,b] [--mods-dir dir] [--coop]
+ *                       [--record script.txt] [--mods a,b] [--mods-dir dir] [--coop] [--no-vsync]
+ *
+ * Pacing: on a display whose refresh is a multiple of 60 Hz (60, 120, 180, 240) the frames are
+ * shown with vsync, one game frame every refresh/60 refreshes, so each stays up equally long.
+ * Elsewhere (or with --no-vsync) a timer paces them, sleeping and then spinning to the deadline.
  *
  * Keys: arrows = joypad, Z = A (jump), X = B (attack), C = X (search/use),
  *       Enter = Menu, Esc = quit. Game controllers are mapped the same way
@@ -283,6 +287,32 @@ static void vs_audio(spg_t *m, const versus_t *v, uint32_t *played)
     audio_flush();
 }
 
+/* vsync pacing (see the top): per_frame refreshes per game frame, 0 while paced by the timer.
+ * A compositor stops a covered or minimised window's refreshes (a present then waits up to its
+ * timeout), so after a few long presents the timer takes over until the window is back. */
+static int per_frame, vsync_per_frame, slow_presents;
+
+static void present(SDL_Renderer *ren, SDL_Texture *tex)
+{
+    const Uint64 t0 = SDL_GetPerformanceCounter();
+    SDL_RenderClear(ren);
+    SDL_RenderCopy(ren, tex, NULL, NULL);
+    SDL_RenderPresent(ren);
+    if (!per_frame) return;
+    const double ms = (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
+    slow_presents = ms > 25 ? slow_presents + 1 : 0;
+    if (slow_presents >= 3) {
+        SDL_RenderSetVSync(ren, 0);
+        per_frame = slow_presents = 0;
+    }
+}
+
+static void vsync_back(SDL_Renderer *ren)
+{
+    if (per_frame || !vsync_per_frame) return;
+    if (!SDL_RenderSetVSync(ren, 1)) per_frame = vsync_per_frame;
+}
+
 /* the next free <base>-NNNN.png */
 static int screenshot(const char *base, const uint32_t *px, int w, int h, char *path, size_t pathlen)
 {
@@ -298,7 +328,7 @@ int main(int argc, char **argv)
 {
     const char *rom_path = NULL;
     char save_path[1024] = "";
-    int scale = 3, filter = -1, volume_arg = -1, coop = 0, host_port = 0;
+    int scale = 3, filter = -1, volume_arg = -1, coop = 0, host_port = 0, no_vsync = 0;
     const char *join = NULL;
     net_opts_t net_o = { 2, 0, 0, 0 };
     long max_frames = -1;
@@ -318,6 +348,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--kb2")) vs_kb2 = 1;
         else if (!strcmp(argv[i], "--quick")) vs_quick = 1;
         else if (!strcmp(argv[i], "--sound-test")) versus = vs_sound_test = 1;
+        else if (!strcmp(argv[i], "--no-vsync")) no_vsync = 1;
         else if (!strcmp(argv[i], "--stage") && i + 1 < argc) vs_stage = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--no-versus-menu")) vs_menu = 0;
         else if (!strcmp(argv[i], "--host")) {
@@ -340,7 +371,7 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "unknown option %s\n", argv[i]); return 2; }
     }
     if (!rom_path) {
-        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100] [--coop] [--host [port] | --join addr[:port]] [--net-delay N] [--versus [--players N] [--stocks N] [--stage N] [--kb2] [--quick]] [--no-versus-menu] [--sound-test]\n", argv[0]);
+        fprintf(stderr, "usage: %s <batman.bin> [--save file.sav] [--scale N] [--filter mode] [--frames N] [--record script.txt] [--mods a,b] [--mods-dir dir] [--volume 0-100] [--coop] [--host [port] | --join addr[:port]] [--net-delay N] [--versus [--players N] [--stocks N] [--stage N] [--kb2] [--quick]] [--no-versus-menu] [--sound-test] [--no-vsync]\n", argv[0]);
         return 2;
     }
     if (versus && (coop || record_path)) {
@@ -445,8 +476,20 @@ int main(int argc, char **argv)
     }
     SDL_Window *win = SDL_CreateWindow("The Batman", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                        PPU_W * scale, PPU_H * scale, SDL_WINDOW_RESIZABLE);
-    SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
-    if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
+    /* vsync only where the refresh is a whole multiple of the game's 60 Hz (see the top) */
+    SDL_DisplayMode mode;
+    if (!no_vsync && !SDL_GetCurrentDisplayMode(SDL_GetWindowDisplayIndex(win), &mode) && mode.refresh_rate >= 59) {
+        const int k = (mode.refresh_rate + 30) / 60;
+        if (abs(mode.refresh_rate - 60 * k) <= k) per_frame = k;
+    }
+    SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | (per_frame ? SDL_RENDERER_PRESENTVSYNC : 0));
+    if (!ren) ren = SDL_CreateRenderer(win, -1, per_frame ? SDL_RENDERER_PRESENTVSYNC : 0);
+    if (!ren) { ren = SDL_CreateRenderer(win, -1, 0); per_frame = 0; }
+    if (per_frame) {
+        SDL_RendererInfo ri;
+        if (SDL_GetRendererInfo(ren, &ri) || !(ri.flags & SDL_RENDERER_PRESENTVSYNC)) per_frame = 0;
+    }
+    vsync_per_frame = per_frame;
     SDL_RenderSetLogicalSize(ren, ow, oh);
     SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888, SDL_TEXTUREACCESS_STREAMING, ow, oh);
     /* the filtered image is already 4x: smooth scaling to the window keeps the scanlines even */
@@ -486,7 +529,24 @@ int main(int argc, char **argv)
     const double frame_ticks = (double)freq / 60.0;
     double next = (double)SDL_GetPerformanceCounter();
     int running = 1, shot = 0;
+    /* vsync: a game frame every per_frame refreshes, counted. Above 60 Hz it is made on the
+     * refresh before it is shown (the game, the filter and the upload can take longer than one
+     * refresh). The clock only corrects drift: a refresh more or less when the display's rate is
+     * half a game frame away from 60 Hz's. */
+    int pending = 0;   /* outbuf holds a made frame that isn't shown yet */
+    int shown = 0;     /* refreshes since the last new frame went up */
     while (running && (max_frames < 0 || (long)m.frame < max_frames)) {
+        if (per_frame) {
+            const double err = (double)SDL_GetPerformanceCounter() - next;   /* > 0: late */
+            const int make_at = per_frame - 1 - (err > frame_ticks / 2);
+            if (pending || shown < make_at || err < -frame_ticks / 2) {
+                if (pending) SDL_UpdateTexture(tex, NULL, outbuf, ow * 4);
+                shown = pending ? 0 : shown + 1;
+                pending = 0;
+                present(ren, tex);
+                continue;
+            }
+        }
         if (vs_start) {   /* from --versus, or the title menu's Versus */
             vs_start = 0;
             versus = 1;
@@ -521,6 +581,9 @@ int main(int argc, char **argv)
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = 0;
+            else if (e.type == SDL_WINDOWEVENT && (e.window.event == SDL_WINDOWEVENT_FOCUS_GAINED ||
+                                                   e.window.event == SDL_WINDOWEVENT_SHOWN ||
+                                                   e.window.event == SDL_WINDOWEVENT_RESTORED)) vsync_back(ren);
             else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) running = 0;
             else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
                 char path[1100];
@@ -845,17 +908,24 @@ int main(int argc, char **argv)
             osd_text(outbuf, ow, oh, 24, 24, 3, osd_msg);
             osd_left--;
         }
-        SDL_UpdateTexture(tex, NULL, outbuf, ow * 4);
-        SDL_RenderClear(ren);
-        SDL_RenderCopy(ren, tex, NULL, NULL);
-        SDL_RenderPresent(ren);
+        if (per_frame > 1) pending = 1;   /* shown on the next refresh (the top of the loop) */
+        else { SDL_UpdateTexture(tex, NULL, outbuf, ow * 4); shown = 0; }
+        present(ren, tex);
+        if (pending && !per_frame) {   /* the timer took over in that present */
+            SDL_UpdateTexture(tex, NULL, outbuf, ow * 4);
+            pending = 0;
+        }
 
         /* pace to 60 Hz; let the audio queue absorb jitter but never grow past ~4 frames */
         next += frame_ticks;
-        const double now = (double)SDL_GetPerformanceCounter();
-        if (next > now) SDL_Delay((Uint32)((next - now) * 1000.0 / (double)freq));
-        else if (now - next > frame_ticks * 5) next = now; /* fell behind: resync */
-        if (audio_dev && SDL_GetQueuedAudioSize(audio_dev) > (Uint32)(SPU_RATE / 60 * 4 * 4)) SDL_Delay(4);
+        double now = (double)SDL_GetPerformanceCounter();
+        if (now - next > frame_ticks * 5) next = now; /* fell behind: resync */
+        else if (!per_frame) {
+            /* SDL_Delay is only good to a millisecond or two: sleep short, spin the rest */
+            if (next - now > freq / 500) SDL_Delay((Uint32)((next - now) * 1000.0 / (double)freq) - 1);
+            while ((now = (double)SDL_GetPerformanceCounter()) < next) {}
+            if (audio_dev && SDL_GetQueuedAudioSize(audio_dev) > (Uint32)(SPU_RATE / 60 * 4 * 4)) SDL_Delay(4);
+        }
     }
 
     if (!join) save_eeprom(&m, save_path);   /* the guest's EEPROM was the host's */

@@ -105,6 +105,11 @@ Keys: arrows, Z = A (jump), X = B (attack), C = X (search/use), Enter = Menu, Es
 The save goes to `target/batman.sav` (override with `--save`).
 Save states: F5 save, F8 load, F6/F7 slot 0-9 (files `target/batman.st<N>`), hold Backspace to
 rewind (up to 60 s). States only load into the same build and ROM image (SHA-256 checked).
+Frames are paced with vsync when the display's refresh is a multiple of 60 Hz (60/120/180/240): each game frame
+stays up the same number of refreshes, and above 60 Hz it is made one refresh ahead (the `crt` filter alone takes
+~5 ms, a 180 Hz refresh is 5.6 ms). Elsewhere, with `--no-vsync`, or while the compositor holds a covered window's
+refreshes back, a timer paces them. On gaming-pc (Hyprland, RTX 4070 Ti Super) any SDL window, even a bare present
+loop, stalls 330-400 ms twice every ~9.5 s inside `SDL_RenderPresent`; that is the desktop's, not the game's.
 Hold Tab to fast-forward (4x). F9 / Shift+F9 cycle the CRT filter (`--filter crt` at start),
 F11 toggles fullscreen, F12 saves a screenshot of the filtered image to `target/batman-NNNN.png`.
 `-` / `=` (or keypad −/+) change the volume in 10% steps and M mutes. The volume and the CRT filter are
